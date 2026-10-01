@@ -319,3 +319,19 @@ button.safe { border: 0; }
 .error { color: var(--warn); background: var(--warn-soft); border-radius: 12px; padding: 10px 12px; font-size: 14px; }
 .loading { flex: 1; display: grid; place-items: center; color: var(--muted); }
 .textlink { border: 0; background: transparent; color: var(--accent); font-weight: 800; padding: 6px 0; text-align: left; }
+
+/* King Soopers products */
+.chip.sale { background: var(--clay); color: #2B1405; }
+button.item-name, button.ing-name {
+  border: 0; background: transparent; padding: 0; text-align: left; font: inherit; color: inherit;
+  text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px;
+}
+.item .item-main button.item-name { pointer-events: auto; position: relative; z-index: 1; font-weight: 700; font-size: 14.5px; line-height: 1.25; }
+button.ing-name { font-size: 13.5px; }
+.kp { display: grid; grid-template-columns: auto 1fr; gap: 14px; align-items: center; }
+.kp img { width: 88px; height: 88px; object-fit: contain; border-radius: 14px; background: #fff; border: 1px solid var(--line); }
+.kp-price { font-family: var(--display); font-size: 26px; font-weight: 800; }
+.kp-price s { font-size: 15px; color: var(--muted); font-weight: 600; }
+.kp-meta { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+.opt.kopt { grid-template-columns: 44px 1fr auto; }
+.opt.kopt img { width: 44px; height: 44px; object-fit: contain; border-radius: 10px; background: #fff; }

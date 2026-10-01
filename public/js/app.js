@@ -324,7 +324,7 @@ function renderWeek() {
       '<button class="meal-btn" type="button" data-open="' + i + '"><span class="meal-name">' + esc(name) + '</span><span class="meal-meta">' + meta + '</span></button>' +
       '<button class="swap" type="button" data-swap="' + i + '" aria-label="Swap ' + d.dow + ' dinner">' + ICON.swap + 'Swap</button></div>';
   });
-  h += '<p class="hint">Prices are estimates until King Soopers prices are connected.</p>';
+  h += '<p class="hint">' + esc(priceSourceNote()) + '</p>';
   $('screen-week').innerHTML = h;
 }
 
@@ -378,12 +378,17 @@ function renderEvery() {
 }
 
 // ---------- List ----------
+// The exact King Soopers product when we have one, otherwise our generic name.
+function displayName(p) { return p.kroger ? p.kroger.description : p.name; }
+function onSale(p) { return p.kroger && p.kroger.promo > 0 && p.kroger.promo < p.kroger.regular; }
+function saleChip(p) { return onSale(p) ? '<span class="chip sale">Sale, save ' + money(p.kroger.regular - p.kroger.promo) + '</span>' : ''; }
+
 function itemRow(r) {
   const src = r.from.length > 2 ? r.from.length + ' uses' : r.from.join(', ');
   return '<div class="item" data-on="' + r.on + '">' +
-    '<button type="button" class="item-toggle" data-item="' + r.key + '" aria-pressed="' + r.on + '" aria-label="' + esc((r.on ? 'Remove ' : 'Add ') + r.product.name) + '"></button>' +
+    '<button type="button" class="item-toggle" data-item="' + r.key + '" aria-pressed="' + r.on + '" aria-label="' + esc((r.on ? 'Remove ' : 'Add ') + displayName(r.product)) + '"></button>' +
     '<span class="box">' + ICON.check + '</span>' +
-    '<span class="item-main"><span class="item-name">' + esc(r.product.name) + '</span><span class="item-sub"><span>' + esc(src) + '</span>' + dyeBadge(r.key, r.product) + '</span></span>' +
+    '<span class="item-main"><button type="button" class="item-name" data-product="' + r.key + '">' + esc(displayName(r.product)) + '</button><span class="item-sub"><span>' + esc(src) + '</span>' + saleChip(r.product) + dyeBadge(r.key, r.product) + '</span></span>' +
     '<span class="item-right"><span class="item-price num">' + money(r.cost) + '</span><br><span class="item-qty">' + (r.qty > 1 ? r.qty + ' × ' : '') + esc(r.product.size || '1') + '</span></span></div>';
 }
 function renderList() {
@@ -472,7 +477,7 @@ function mealSheet(id, dayIdx) {
   m.items.forEach(([k, q]) => {
     const p = P[k];
     if (!p) return;
-    b += '<div class="ing"><span>' + esc(p.name) + (p.pantry ? ' <span class="pantry-tag">pantry</span>' : '') + '<small>' + esc(useText(q, p)) + ' ' + dyeBadge(k, p) + '</small></span><b class="num">' + money(p.price * q) + '</b></div>';
+    b += '<div class="ing"><span><button type="button" class="ing-name" data-product="' + k + '">' + esc(displayName(p)) + '</button>' + (p.pantry ? ' <span class="pantry-tag">pantry</span>' : '') + '<small>' + esc(useText(q, p)) + ' ' + saleChip(p) + dyeBadge(k, p) + '</small></span><b class="num">' + money(p.price * q) + '</b></div>';
   });
   b += '</div><p class="why">True cost counts only what this meal uses. Bought just for this dinner, the receipt would be about ' + whole(bought) + '. The rest carries into other meals.</p>';
   if (dayIdx != null) b += '<button class="cta ghost" type="button" data-swap="' + dayIdx + '">' + ICON.swap + 'Swap this dinner</button>';
@@ -532,6 +537,75 @@ async function setDyeChecked(key, on) {
   toast(on ? p.name + ' marked dye-free' : 'Check removed');
 }
 
+// ---------- King Soopers products ----------
+function priceSourceNote() {
+  const s = app.catalog.settings;
+  if (!s.krogerStore || !s.pricesUpdatedAt) return 'Prices are estimates until King Soopers prices are connected.';
+  const when = new Date(s.pricesUpdatedAt);
+  const sameDay = when.toDateString() === new Date().toDateString();
+  return 'Prices from ' + s.krogerStore.name.replace(/^King Soopers( Marketplace)? - /, '') + ' King Soopers, updated ' +
+    (sameDay ? 'today' : when.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })) + '.';
+}
+
+function productSheet(key) {
+  const p = app.catalog.products[key];
+  if (!p) return;
+  const k = p.kroger;
+  const head = '<div class="eyebrow">' + esc(p.name) + '</div><h2 id="sheetTitle">' + esc(displayName(p)) + '</h2>';
+  let b = '';
+  if (k) {
+    b += '<div class="kp">' + (k.image ? '<img src="' + esc(k.image) + '" alt="" width="88" height="88" loading="lazy">' : '') +
+      '<div><div class="kp-price num">' + (onSale(p) ? money(k.promo) + ' <s>' + money(k.regular) + '</s>' : money(k.regular)) + '</div>' +
+      '<div class="kp-meta">' + esc([k.size, k.aisle].filter(Boolean).join(' · ')) + '</div>' +
+      '<div class="kp-meta">' + saleChip(p) + dyeBadge(key, p) + (k.stock === 'LOW' ? '<span class="chip treat">Low stock</span>' : '') + (k.unavailable ? '<span class="chip treat">Not at your store right now</span>' : '') + '</div></div></div>';
+    if (!k.confirmed) {
+      b += '<div class="tip good">' + ICON.leaf + '<span>The app picked this one automatically. If it\'s what you buy, tap <b>This is right</b>. If not, search for the right one below.</span></div>' +
+        '<button class="cta" type="button" data-confirm="' + key + '">' + ICON.check + 'This is right</button>';
+    }
+  } else {
+    b += '<div class="tip dye">' + ICON.eye + '<span>This isn\'t linked to a King Soopers product yet, so its price is an estimate. Search for it below.</span></div>';
+  }
+  b += '<div class="field"><label for="psearch">Find a different product</label><input id="psearch" type="search" placeholder="Search King Soopers" value="' + esc(p.name) + '" autocomplete="off"></div>' +
+    '<div class="opts" id="presults"></div>';
+  openSheet(head, b);
+  const input = $('psearch');
+  let timer;
+  input.oninput = () => { clearTimeout(timer); timer = setTimeout(() => runSearch(key, input.value), 400); };
+  input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); runSearch(key, input.value); } };
+}
+
+async function runSearch(key, q) {
+  const box = $('presults');
+  if (!box) return;
+  if (q.trim().length < 3) { box.innerHTML = ''; return; }
+  box.innerHTML = '<p class="hint">Searching…</p>';
+  let res;
+  try { res = await api('/api/kroger/search?q=' + encodeURIComponent(q.trim())); }
+  catch { box.innerHTML = '<p class="hint">You\'re offline. Try again when you have signal.</p>'; return; }
+  if (res.status !== 200) { box.innerHTML = '<p class="hint">' + esc(res.data?.error || 'Search didn\'t work. Try again.') + '</p>'; return; }
+  const current = app.catalog.products[key].kroger?.productId;
+  box.innerHTML = res.data.results.length ? res.data.results.map(r =>
+    '<button class="opt kopt' + (r.productId === current ? ' current' : '') + '" type="button" data-choose="' + r.productId + '" data-key="' + key + '">' +
+    (r.image ? '<img src="' + esc(r.image) + '" alt="" width="44" height="44" loading="lazy">' : '<span></span>') +
+    '<span style="min-width:0"><span class="meal-name">' + esc(r.description) + '</span><span class="meal-meta">' + esc(r.size) +
+    (r.promo > 0 && r.promo < r.regular ? '<span class="chip sale">Sale</span>' : '') + '</span></span>' +
+    '<span class="opt-cost num">' + money(r.promo > 0 && r.promo < r.regular ? r.promo : r.regular) + '</span></button>').join('')
+    : '<p class="hint">Nothing found. Try fewer or different words.</p>';
+}
+
+async function chooseProduct(key, productId) {
+  let res;
+  try { res = await api('/api/products/' + key + '/kroger', { method: 'PUT', body: { productId } }); }
+  catch { toast('You\'re offline. Try again when you have signal.'); return; }
+  if (res.status === 401) { signOutLocal(); return; }
+  if (res.status !== 200) { toast(res.data?.error || 'That didn\'t save. Try again.'); return; }
+  app.catalog.products[key] = res.data.product;
+  saveCache();
+  renderAll();
+  closeSheet();
+  toast('Saved: ' + displayName(res.data.product));
+}
+
 function copySheet() {
   const c = app.catalog, rows = buildList(c, week()), t = totals(rows);
   const text = listAsText(c, rows, 'Week of ' + weekLabel(app.current));
@@ -564,10 +638,13 @@ function toast(msg) {
 
 // ---------- Events ----------
 document.addEventListener('click', e => {
-  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide]');
+  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide],[data-product],[data-choose],[data-confirm]');
   if (!el || !app.catalog) return;
   const ds = el.dataset, w = week();
   if (ds.tab) setTab(ds.tab);
+  else if (ds.product) { e.stopPropagation(); productSheet(ds.product); }
+  else if (ds.choose) chooseProduct(ds.key, ds.choose);
+  else if (ds.confirm) chooseProduct(ds.confirm, app.catalog.products[ds.confirm].kroger.productId);
   else if (ds.hide) { local.set('hide:' + ds.hide, true); renderAll(); }
   else if (ds.dye) { e.stopPropagation(); dyeSheet(ds.dye); }
   else if (ds.dyeset) setDyeChecked(ds.dyeset, ds.val === 'on');

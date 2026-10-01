@@ -1,7 +1,7 @@
 // Keeps the app's files on the phone so it opens instantly, even with no signal.
 // Files are served from the phone first, then quietly refreshed in the background.
 // Bump VERSION when the list of files changes.
-const VERSION = 'fp-1';
+const VERSION = 'fp-2';
 const SHELL = [
   '/', '/index.html', '/app.css', '/fonts/fonts.css',
   '/fonts/nunito-sans.woff2', '/fonts/bricolage-grotesque.woff2',

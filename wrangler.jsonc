@@ -17,7 +17,10 @@
       "migrations_dir": "migrations"
     }
   ],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // Refresh King Soopers prices every morning at 5am Mountain (11:00 UTC).
+  "triggers": { "crons": ["0 11 * * *"] }
   // Secrets (set with `npx wrangler secret put NAME`, never committed):
-  //   FAMILY_PASSCODE, SESSION_SECRET, ALLOWED_EMAILS (comma-separated)
+  //   FAMILY_PASSCODE, SESSION_SECRET, ALLOWED_EMAILS (comma-separated),
+  //   KROGER_CLIENT_ID, KROGER_CLIENT_SECRET, ADMIN_TOKEN (optional, for maintenance scripts)
 }
