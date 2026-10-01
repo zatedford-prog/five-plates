@@ -1,0 +1,21 @@
+{
+  "name": "five-plates",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Weekly meal and grocery planner for our family, with King Soopers pickup.",
+  "scripts": {
+    "dev": "wrangler d1 migrations apply five-plates --local && wrangler dev",
+    "deploy": "wrangler d1 migrations apply five-plates --remote && wrangler deploy",
+    "test": "node --test test/*.test.js",
+    "icons": "node scripts/make-icons.mjs"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.5",
+    "wrangler": "^4.145.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.1": true,
+    "workerd@1.20260930.2": true
+  }
+}

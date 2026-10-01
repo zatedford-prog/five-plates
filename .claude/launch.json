@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "five-plates", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 8787 }
+  ]
+}

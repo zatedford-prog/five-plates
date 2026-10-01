@@ -1,0 +1,859 @@
+<title>Five Plates</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Nunito+Sans:opsz,wght@6..12,400;6..12,600;6..12,700;6..12,800&display=swap">
+<style>
+/* Layout: one iPhone-width app column (full-bleed on phones, framed on desktop); scrolling screen between a header and a bottom tab bar; bottom sheets for detail. */
+:root {
+  --bg: #E7EDE8;
+  --surface: #FFFFFF;
+  --surface-2: #F3F6F2;
+  --ink: #17221E;
+  --muted: #5A6B63;
+  --line: #DCE4DE;
+  --accent: #1F5E55;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #DCEBE5;
+  --butter: #F2C94C;
+  --butter-soft: #FBF0C6;
+  --good: #2A7A4B;
+  --good-soft: #DDF0E3;
+  --warn: #8F5B00;
+  --warn-soft: #FBEBCB;
+  --frame: #1A2320;
+  --shadow: rgba(23, 34, 30, .14);
+  --sky: #5E9BD1;
+  --clay: #D9844F;
+  --display: 'Bricolage Grotesque', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --body: 'Nunito Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0C1210; --surface: #17201D; --surface-2: #111916; --ink: #E5EDE9; --muted: #98ABA3;
+    --line: #283632; --accent: #6CC3B2; --accent-ink: #0C1210; --accent-soft: #1D3833;
+    --butter: #E6C451; --butter-soft: #37311A; --good: #7BD29E; --good-soft: #1A3326;
+    --warn: #E7B45B; --warn-soft: #3A2E16; --frame: #000000; --shadow: rgba(0,0,0,.5);
+    --sky: #7FB6E6; --clay: #E59A6B;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0C1210; --surface: #17201D; --surface-2: #111916; --ink: #E5EDE9; --muted: #98ABA3;
+  --line: #283632; --accent: #6CC3B2; --accent-ink: #0C1210; --accent-soft: #1D3833;
+  --butter: #E6C451; --butter-soft: #37311A; --good: #7BD29E; --good-soft: #1A3326;
+  --warn: #E7B45B; --warn-soft: #3A2E16; --frame: #000000; --shadow: rgba(0,0,0,.5);
+  --sky: #7FB6E6; --clay: #E59A6B;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.45;
+  display: flex; justify-content: center; -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+button:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.num { font-variant-numeric: tabular-nums; }
+
+.phone {
+  width: 100%; max-width: 430px; height: 100%; display: flex; flex-direction: column;
+  background: var(--surface-2); position: relative; overflow: hidden;
+}
+@media (min-width: 560px) {
+  body { align-items: center; padding-block: 24px; }
+  .phone { height: min(880px, 100%); border: 10px solid var(--frame); border-radius: 46px; box-shadow: 0 30px 60px var(--shadow); }
+}
+
+/* header */
+.top { padding: 18px 16px 12px; display: flex; flex-direction: column; gap: 12px; background: var(--surface-2); }
+.brandrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.brand { display: flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 800; font-size: 15px; letter-spacing: -.01em; }
+.plates { display: flex; gap: 3px; }
+.plates i { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); display: block; }
+.plates i:nth-child(n+3) { width: 7px; height: 7px; margin-top: 1px; background: var(--butter); }
+.eyebrow { font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+h1 { font-family: var(--display); font-weight: 800; font-size: 30px; line-height: 1.05; letter-spacing: -.02em; margin: 2px 0 0; text-wrap: balance; }
+h2 { font-family: var(--display); font-weight: 700; font-size: 22px; line-height: 1.15; letter-spacing: -.01em; margin: 0; text-wrap: balance; }
+h3 { font-size: 11px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); margin: 0; }
+.pill-btn {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 7px 12px;
+  font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.pill-btn svg { width: 15px; height: 15px; }
+
+/* budget meter */
+.meter { display: flex; flex-direction: column; gap: 7px; }
+.meter-line { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 8px; font-size: 13px; }
+.legend b { color: var(--ink); font-weight: 800; }
+.meter-line b { font-family: var(--display); font-size: 18px; font-weight: 700; }
+.meter-note { color: var(--muted); font-weight: 600; }
+.bar { height: 10px; border-radius: 999px; background: var(--line); display: flex; overflow: hidden; }
+.bar span { display: block; height: 100%; transition: width .35s ease; }
+.bar .d { background: var(--accent); }
+.bar .s { background: var(--butter); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 5px; }
+.legend i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+.screen { flex: 1; overflow-y: auto; padding: 4px 16px 24px; display: flex; flex-direction: column; gap: 10px; -webkit-overflow-scrolling: touch; }
+.screen[hidden] { display: none !important; }
+
+/* welcome */
+.hello {
+  background: var(--butter-soft); border-radius: 18px; padding: 14px 14px 14px 16px; display: flex; gap: 10px; align-items: flex-start;
+}
+.hello p { margin: 0; font-size: 14px; }
+.hello strong { font-family: var(--display); font-size: 16px; display: block; margin-bottom: 2px; }
+.x { border: 0; background: transparent; width: 28px; height: 28px; border-radius: 50%; flex: none; display: grid; place-items: center; color: var(--muted); }
+.x svg { width: 16px; height: 16px; }
+
+/* day rows */
+.day {
+  display: grid; grid-template-columns: 46px 1fr auto; gap: 12px; align-items: center;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 10px 10px 10px 12px;
+}
+.date { text-align: center; line-height: 1; }
+.date small { display: block; font-size: 10.5px; font-weight: 800; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+.date b { display: block; font-family: var(--display); font-size: 22px; font-weight: 700; margin-top: 3px; }
+.meal-btn { border: 0; background: transparent; text-align: left; padding: 2px 0; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.meal-name { font-weight: 800; font-size: 15.5px; line-height: 1.2; }
+.meal-meta { font-size: 12.5px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.chip { font-size: 11px; font-weight: 800; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.chip.cheap { background: var(--good-soft); color: var(--good); }
+.chip.mid { background: var(--accent-soft); color: var(--accent); }
+.chip.treat { background: var(--butter-soft); color: var(--warn); }
+.chip.share { background: transparent; color: var(--accent); padding: 0; font-weight: 700; }
+.chip.idea { background: var(--butter); color: #3A2E00; }
+.swap {
+  border: 1px solid var(--line); background: var(--surface-2); border-radius: 12px; height: 38px; padding: 0 10px;
+  display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 800; color: var(--accent);
+}
+.swap svg { width: 15px; height: 15px; }
+.day.off .meal-name { color: var(--muted); }
+
+.hint { font-size: 12.5px; color: var(--muted); text-align: center; margin: 6px 8px 0; }
+
+/* list */
+.list-summary {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 14px 16px;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+}
+.list-summary .big { font-family: var(--display); font-size: 26px; font-weight: 800; line-height: 1; }
+.list-summary small { color: var(--muted); font-size: 12.5px; display: block; margin-top: 4px; }
+.group { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.group-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px; }
+.group-head span { font-size: 12px; color: var(--muted); }
+.items { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+.item {
+  display: grid; grid-template-columns: 26px 1fr auto; gap: 12px; align-items: center; padding: 11px 14px;
+  border: 0; border-top: 1px solid var(--line); width: 100%; background: transparent; text-align: left;
+}
+.item:first-child { border-top: 0; }
+.box { width: 24px; height: 24px; border-radius: 8px; border: 2px solid var(--line); display: grid; place-items: center; transition: background .15s, border-color .15s; }
+.box svg { width: 14px; height: 14px; opacity: 0; color: var(--accent-ink); }
+.item[aria-pressed="true"] .box { background: var(--accent); border-color: var(--accent); }
+.item[aria-pressed="true"] .box svg { opacity: 1; }
+.item[aria-pressed="false"] .item-name, .item[aria-pressed="false"] .item-price { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+.item-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.item-name { font-weight: 700; font-size: 14.5px; line-height: 1.25; }
+.item-sub { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: center; }
+.safe { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 800; color: var(--good); background: var(--good-soft); padding: 1px 7px 1px 5px; border-radius: 999px; }
+.safe svg { width: 11px; height: 11px; }
+.item-right { text-align: right; line-height: 1.2; }
+.item-price { font-weight: 800; font-size: 14.5px; }
+.item-qty { font-size: 12px; color: var(--muted); }
+
+.cta-wrap { padding: 10px 16px 12px; background: linear-gradient(to top, var(--surface-2) 70%, transparent); }
+.cta {
+  width: 100%; border: 0; border-radius: 16px; background: var(--accent); color: var(--accent-ink);
+  padding: 15px 16px; font-weight: 800; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.cta svg { width: 20px; height: 20px; }
+.cta.ghost { background: var(--surface); color: var(--accent); border: 1px solid var(--line); }
+
+/* library */
+.lib-note { font-size: 13px; color: var(--muted); margin: 2px 4px 4px; }
+.lib {
+  display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 18px; padding: 12px 14px;
+}
+.lib .meal-name { display: block; margin-bottom: 4px; }
+.lib-cost { text-align: right; }
+.lib-cost b { font-family: var(--display); font-size: 19px; font-weight: 700; display: block; line-height: 1.1; }
+.lib-cost small { font-size: 11.5px; color: var(--muted); }
+
+/* everyday */
+.sec { background: var(--surface); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+.sec-head { padding: 13px 14px 10px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.sec-head h2 { font-size: 19px; }
+.sec-head small { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+.sec-head .sec-cost { text-align: right; font-family: var(--display); font-weight: 700; font-size: 18px; line-height: 1.1; }
+.sec-head .sec-cost small { font-family: var(--body); font-weight: 600; }
+.days-dots { display: flex; gap: 4px; margin-top: 7px; }
+.days-dots i { width: 16px; height: 6px; border-radius: 99px; background: var(--line); display: block; }
+.days-dots i.on { background: var(--accent); }
+.erow { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 10px 14px; border-top: 1px solid var(--line); }
+.erow-name { font-weight: 700; font-size: 14.5px; line-height: 1.25; }
+.erow-sub { font-size: 12px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 3px 8px; align-items: center; margin-top: 2px; }
+.erow.zero .erow-name { color: var(--muted); }
+.stepper { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); }
+.stepper button { width: 34px; height: 34px; border: 0; background: transparent; font-size: 19px; font-weight: 700; color: var(--accent); display: grid; place-items: center; }
+.stepper button:disabled { color: var(--line); cursor: default; }
+.stepper span { min-width: 22px; text-align: center; font-weight: 800; font-size: 14.5px; }
+.sec-tip { margin: 0; padding: 10px 14px 12px; font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line); background: var(--surface-2); }
+
+/* tabs */
+.tabs {
+  display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid var(--line); background: var(--surface);
+  padding: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+}
+.tab { border: 0; background: transparent; padding: 6px 4px; display: flex; flex-direction: column; align-items: center; gap: 3px; font-size: 11.5px; font-weight: 800; color: var(--muted); border-radius: 12px; }
+.tab svg { width: 22px; height: 22px; }
+.tab[aria-selected="true"] { color: var(--accent); }
+.tab .count { background: var(--accent); color: var(--accent-ink); border-radius: 999px; font-size: 10px; padding: 0 6px; margin-left: 2px; }
+
+/* sheets */
+.scrim { position: absolute; inset: 0; background: rgba(10, 16, 14, .45); opacity: 0; pointer-events: none; transition: opacity .2s; z-index: 10; }
+.scrim.open { opacity: 1; pointer-events: auto; }
+.sheet {
+  position: absolute; left: 0; right: 0; bottom: 0; max-height: 88%; background: var(--surface); z-index: 11;
+  border-radius: 26px 26px 0 0; transform: translateY(105%); transition: transform .28s cubic-bezier(.2,.8,.2,1);
+  display: flex; flex-direction: column; box-shadow: 0 -10px 30px var(--shadow);
+}
+.sheet.open { transform: translateY(0); }
+.grab { width: 40px; height: 5px; border-radius: 99px; background: var(--line); margin: 8px auto 0; flex: none; }
+.sheet-head { padding: 10px 16px 12px; display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex: none; }
+.sheet-body { overflow-y: auto; padding: 0 16px calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 14px; }
+
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.stat { background: var(--surface-2); border-radius: 14px; padding: 10px 10px 9px; }
+.stat b { font-family: var(--display); font-size: 20px; font-weight: 700; display: block; line-height: 1.1; }
+.stat small { font-size: 11.5px; color: var(--muted); line-height: 1.25; display: block; margin-top: 3px; }
+.vs { background: var(--surface-2); border-radius: 14px; padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.vs-row { display: grid; grid-template-columns: 92px 1fr 56px; gap: 10px; align-items: center; font-size: 12.5px; }
+.vs-bar { height: 10px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.vs-bar span { display: block; height: 100%; border-radius: 99px; }
+.vs-row b { text-align: right; }
+.vs p { margin: 0; font-size: 13px; font-weight: 700; color: var(--good); }
+.tip { border-radius: 14px; padding: 11px 13px; font-size: 13px; display: flex; gap: 9px; align-items: flex-start; }
+.tip svg { width: 17px; height: 17px; flex: none; margin-top: 1px; }
+.tip.dye { background: var(--warn-soft); color: var(--warn); }
+.tip.dye span { color: var(--ink); }
+.tip.good { background: var(--accent-soft); }
+.ing { display: grid; grid-template-columns: 1fr auto; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.ing:first-of-type { border-top: 0; }
+.ing small { display: block; color: var(--muted); font-size: 12px; }
+.ing b { font-weight: 800; }
+.pantry-tag { font-size: 10.5px; font-weight: 800; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+.why { font-size: 12.5px; color: var(--muted); margin: 0; }
+
+.opt {
+  display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; width: 100%; text-align: left;
+  border: 1px solid var(--line); background: var(--surface); border-radius: 16px; padding: 11px 14px;
+}
+.opt.current { border-color: var(--accent); background: var(--accent-soft); }
+.opt .meal-meta { margin-top: 3px; }
+.opt-cost { font-weight: 800; font-family: var(--display); font-size: 17px; }
+.opts { display: flex; flex-direction: column; gap: 8px; }
+.opts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+/* send */
+.send-list { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow-y: auto; background: var(--surface-2); border-radius: 14px; padding: 8px 12px; }
+.send-row { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; padding: 4px 0; color: var(--muted); }
+.send-row.done { color: var(--ink); }
+.send-row i { font-style: normal; font-weight: 800; color: var(--good); width: 16px; display: inline-block; }
+.store { display: flex; gap: 12px; align-items: center; background: var(--surface-2); border-radius: 14px; padding: 12px 14px; }
+.store-logo { width: 40px; height: 40px; border-radius: 12px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-family: var(--display); font-weight: 800; font-size: 15px; flex: none; }
+.store p { margin: 0; font-size: 13px; color: var(--muted); }
+.store b { display: block; color: var(--ink); font-size: 14.5px; }
+.done-mark { width: 64px; height: 64px; border-radius: 50%; background: var(--good-soft); color: var(--good); display: grid; place-items: center; margin: 4px auto 0; }
+.done-mark svg { width: 34px; height: 34px; }
+.center { text-align: center; }
+.center p { margin: 6px 0 0; color: var(--muted); font-size: 14px; }
+.preview-note { font-size: 12px; color: var(--muted); text-align: center; margin: 0; }
+.progress { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.progress span { display: block; height: 100%; width: 0; background: var(--accent); transition: width .12s linear; }
+
+.toast {
+  position: absolute; left: 50%; bottom: 86px; transform: translate(-50%, 20px); background: var(--ink); color: var(--surface);
+  padding: 9px 16px; border-radius: 999px; font-size: 13px; font-weight: 700; opacity: 0; transition: opacity .2s, transform .2s; z-index: 20; white-space: nowrap; pointer-events: none;
+}
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+</style>
+
+<div class="phone" id="phone">
+  <header class="top">
+    <div class="brandrow">
+      <div class="brand"><span class="plates" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>Five Plates</div>
+      <button class="pill-btn" id="suggestBtn" type="button">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.8 4.9L19 9.7l-4.2 3.1 1.5 5.2L12 15l-4.3 3 1.5-5.2L5 9.7l5.2-1.8z"/></svg>
+        Suggest a week
+      </button>
+    </div>
+    <div>
+      <div class="eyebrow" id="eyebrow">Week of Oct 4 – 10</div>
+      <h1 id="title">Dinners this week</h1>
+    </div>
+    <div class="meter" id="meter"></div>
+  </header>
+
+  <main class="screen" id="screen-week" role="tabpanel" aria-label="Week"></main>
+  <main class="screen" id="screen-every" role="tabpanel" aria-label="Breakfast, lunch and snacks" hidden></main>
+  <main class="screen" id="screen-list" role="tabpanel" aria-label="Shopping list" hidden></main>
+  <main class="screen" id="screen-meals" role="tabpanel" aria-label="Our meals" hidden></main>
+
+  <div class="cta-wrap" id="ctaWrap" hidden>
+    <button class="cta" id="sendBtn" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2.5 3.5h3l2.4 11.2a1.5 1.5 0 0 0 1.5 1.2h8.3a1.5 1.5 0 0 0 1.5-1.1L21 8H6.3"/></svg>
+      <span id="sendLabel">Send to King Soopers cart</span>
+    </button>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button class="tab" role="tab" aria-selected="true" data-tab="week" id="tab-week" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
+      Dinners
+    </button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="every" id="tab-every" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11h13a0 0 0 0 1 0 0v1a6.5 6.5 0 0 1-6.5 6.5A6.5 6.5 0 0 1 4 12v-1z"/><path d="M17 12h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8 3.5c-.8 1 .8 2 0 3M12 3.5c-.8 1 .8 2 0 3"/><path d="M6 21h9"/></svg>
+      Everyday
+    </button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="list" id="tab-list" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="M3.5 6.5l1.2 1.2L6.8 5.5M3.5 12l1.2 1.2 2.1-2.2M3.5 17.5l1.2 1.2 2.1-2.2"/></svg>
+      <span>List <span class="count num" id="listCount">0</span></span>
+    </button>
+    <button class="tab" role="tab" aria-selected="false" data-tab="meals" id="tab-meals" type="button">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/><path d="M9 8h7M9 11.5h5"/></svg>
+      Meals
+    </button>
+  </nav>
+
+  <div class="scrim" id="scrim"></div>
+  <section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="grab" aria-hidden="true"></div>
+    <div class="sheet-head">
+      <div id="sheetHead"></div>
+      <button class="x" id="sheetClose" type="button" aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </section>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</div>
+
+<script>
+(function () {
+  // ---------- Data (sample King Soopers prices, estimates) ----------
+  // dye: 1 = a category where red/blue dyes show up; this exact product is on the checked-safe list.
+  const P = {
+    beef:{n:'Ground beef 80/20',s:'1 lb',p:5.99,a:'Meat',sh:'ground beef'},
+    buns:{n:'Kroger hamburger buns',s:'8 ct',p:2.49,a:'Bakery'},
+    cheddarSl:{n:'Kroger sharp cheddar slices',s:'16 ct',p:3.49,a:'Dairy & eggs',sh:'cheddar'},
+    fries:{n:'Ore-Ida Golden Crinkles fries',s:'32 oz',p:5.49,a:'Frozen'},
+    romaine:{n:'Romaine hearts',s:'3 ct',p:3.99,a:'Produce',sh:'romaine'},
+    roma:{n:'Roma tomatoes',s:'about 1 lb',p:1.79,a:'Produce',sh:'tomatoes'},
+    onion:{n:'Yellow onions',s:'each',p:0.99,a:'Produce'},
+    condiments:{n:'Ketchup & mustard',s:'',p:3.49,a:'Pantry',pantry:1},
+    mexCheese:{n:'Kroger shredded Mexican blend',s:'8 oz',p:2.49,a:'Dairy & eggs',sh:'shredded cheese'},
+    sourCream:{n:'Kroger sour cream',s:'16 oz',p:2.29,a:'Dairy & eggs',sh:'sour cream'},
+    salsa:{n:'Simple Truth Organic mild salsa',s:'16 oz',p:3.49,a:'Pantry',dye:1,sh:'salsa'},
+    chips:{n:'Simple Truth Organic tortilla chips, plain',s:'12 oz',p:3.29,a:'Pantry',dye:1},
+    blackBeans:{n:'Kroger black beans',s:'15 oz can',p:0.99,a:'Pantry'},
+    tacoSeas:{n:'Simple Truth Organic taco seasoning',s:'1 oz',p:1.49,a:'Pantry',dye:1},
+    penne:{n:'Barilla penne',s:'16 oz',p:1.99,a:'Pantry'},
+    marinara:{n:'Kroger marinara sauce',s:'24 oz',p:2.49,a:'Pantry'},
+    itSausage:{n:'Johnsonville mild Italian sausage',s:'19 oz, 5 links',p:6.49,a:'Meat',dye:1,sh:'Italian sausage'},
+    bkSausage:{n:'Johnsonville original breakfast links',s:'12 oz',p:4.99,a:'Meat',dye:1},
+    parm:{n:'Kroger grated parmesan',s:'8 oz',p:3.99,a:'Dairy & eggs'},
+    eggs:{n:'Kroger large eggs',s:'dozen',p:3.29,a:'Dairy & eggs',sh:'eggs'},
+    milk:{n:'Lactaid whole milk',s:'half gallon',p:4.79,a:'Dairy & eggs'},
+    flour:{n:'All-purpose flour',s:'5 lb',p:3.49,a:'Pantry',pantry:1},
+    butter:{n:'Butter',s:'1 lb',p:4.49,a:'Pantry',pantry:1},
+    jam:{n:'Simple Truth Organic strawberry spread',s:'10 oz',p:3.99,a:'Pantry',dye:1},
+    sweetPot:{n:'Sweet potatoes',s:'3 lb bag',p:3.99,a:'Produce'},
+    kale:{n:'Kale',s:'bunch',p:2.49,a:'Produce',sh:'kale'},
+    sourdough:{n:'Kroger sourdough bread',s:'loaf',p:3.29,a:'Bakery'},
+    tomSoup:{n:"Campbell's condensed tomato soup",s:'10.75 oz can',p:1.49,a:'Pantry',dye:1},
+    thighs:{n:'Boneless chicken thighs',s:'about 1.5 lb',p:6.49,a:'Meat'},
+    carrots:{n:'Carrots',s:'2 lb bag',p:1.99,a:'Produce',sh:'carrots'},
+    celery:{n:'Celery',s:'bunch',p:1.99,a:'Produce'},
+    noodles:{n:'Kroger wide egg noodles',s:'12 oz',p:2.29,a:'Pantry'},
+    broth:{n:'Kroger chicken broth',s:'32 oz',p:2.49,a:'Pantry'},
+    breasts:{n:'Boneless chicken breasts',s:'about 3 lb',p:10.49,a:'Meat',sh:'chicken'},
+    zucchini:{n:'Zucchini',s:'each',p:1.29,a:'Produce'},
+    peppers:{n:'Bell peppers',s:'3 pack',p:3.99,a:'Produce'},
+    rice:{n:'Kroger jasmine rice',s:'2 lb',p:2.99,a:'Pantry',sh:'rice'},
+    oil:{n:'Olive oil',s:'',p:7.99,a:'Pantry',pantry:1},
+    sirloin:{n:'Top sirloin steak, family pack',s:'about 2.5 lb',p:24.99,a:'Meat'},
+    russets:{n:'Russet potatoes',s:'5 lb bag',p:4.49,a:'Produce'},
+    broccoli:{n:'Broccoli crowns',s:'about 1.5 lb',p:3.49,a:'Produce'},
+    pizzaCrust:{n:'Kroger refrigerated pizza crust',s:'13.8 oz',p:2.99,a:'Dairy & eggs'},
+    mozz:{n:'Kroger shredded mozzarella',s:'16 oz',p:4.49,a:'Dairy & eggs'},
+    pizzaSauce:{n:'Kroger pizza sauce',s:'14 oz',p:1.99,a:'Pantry'},
+    pepperoni:{n:'Hormel pepperoni',s:'6 oz',p:3.49,a:'Meat',dye:1},
+    peasCarrots:{n:'Kroger frozen peas & carrots',s:'12 oz',p:1.49,a:'Frozen'},
+    greenOnion:{n:'Green onions',s:'bunch',p:0.99,a:'Produce'},
+    soy:{n:'Soy sauce',s:'',p:2.99,a:'Pantry',pantry:1},
+    tortillas:{n:'Kroger flour tortillas',s:'10 ct',p:2.99,a:'Bakery'},
+    refried:{n:'Kroger refried beans',s:'16 oz can',p:1.49,a:'Pantry'},
+    spices:{n:'Salt, pepper & spices',s:'',p:4.00,a:'Pantry',pantry:1},
+    bread:{n:'Kroger 100% whole wheat bread',s:'loaf',p:2.49,a:'Bakery'},
+    bananas:{n:'Bananas',s:'about 2.5 lb',p:1.49,a:'Produce'},
+    apples:{n:'Gala apples',s:'3 lb bag',p:4.49,a:'Produce'},
+    yogurt:{n:'Simple Truth Organic plain yogurt',s:'32 oz',p:4.29,a:'Dairy & eggs',dye:1},
+    cereal:{n:'Cheerios, original (dye-free)',s:'18 oz',p:4.99,a:'Pantry',dye:1},
+    pb:{n:'Kroger creamy peanut butter',s:'16 oz',p:2.29,a:'Pantry'},
+    turkey:{n:'Deli turkey',s:'9 oz',p:4.99,a:'Meat'},
+    stringCheese:{n:'Kroger string cheese',s:'12 ct',p:3.99,a:'Dairy & eggs'},
+    oats:{n:'Kroger old fashioned oats',s:'42 oz',p:4.49,a:'Pantry'},
+    brownSugar:{n:'Brown sugar',s:'',p:2.49,a:'Pantry',pantry:1},
+    syrup:{n:'Maple syrup',s:'',p:7.99,a:'Pantry',pantry:1},
+    krusteaz:{n:'Krusteaz buttermilk pancake mix',s:'32 oz',p:4.29,a:'Pantry',dye:1},
+    frozenPizza:{n:'Red Baron classic crust pepperoni pizza',s:'frozen, 20.6 oz',p:5.99,a:'Frozen',dye:1},
+    gfPizza:{n:'Simple Truth gluten-free cauliflower crust pizza',s:'frozen, 11 oz',p:6.99,a:'Frozen',dye:1},
+    ftSticks:{n:'Kroger French toast sticks, frozen',s:'24 ct',p:4.99,a:'Frozen',dye:1},
+    frozenWaffles:{n:'Kodiak Power Waffles, frozen',s:'8 ct',p:5.49,a:'Frozen',dye:1},
+    strawberries:{n:'Strawberries',s:'1 lb',p:3.99,a:'Produce'},
+    granola:{n:'Simple Truth Organic granola',s:'12 oz',p:3.99,a:'Pantry',dye:1},
+    jelly:{n:"Welch's concord grape jelly",s:'30 oz',p:3.99,a:'Pantry',dye:1},
+    macCheese:{n:"Annie's shells & white cheddar",s:'6 oz box',p:1.99,a:'Pantry',dye:1},
+    goldfish:{n:'Goldfish crackers, original cheddar',s:'30 oz carton',p:9.99,a:'Pantry',dye:1},
+    pouches:{n:'GoGo squeeZ applesauce pouches',s:'12 ct',p:7.99,a:'Pantry',dye:1},
+    granolaBars:{n:'Kroger chewy granola bars, chocolate chip',s:'8 ct',p:2.49,a:'Pantry',dye:1},
+    babyCarrots:{n:'Baby carrots',s:'1 lb',p:1.49,a:'Produce'},
+    pretzels:{n:"Snyder's mini pretzels",s:'16 oz',p:3.99,a:'Pantry'},
+    clementines:{n:'Clementines',s:'3 lb bag',p:5.99,a:'Produce'},
+    popcorn:{n:'SkinnyPop popcorn',s:'6 pack',p:5.49,a:'Pantry'}
+  };
+
+  // Breakfast and lunch: items are what one day uses for the whole family.
+  const BREAKFASTS = [
+    {id:'cereal',name:'Dye-free cereal & milk',items:[['cereal',.3],['milk',.3],['bananas',.2]]},
+    {id:'frozen',name:'Kodiak frozen waffles or pancakes',items:[['frozenWaffles',.9],['syrup',.1],['bananas',.2]]},
+    {id:'frenchToast',name:'Frozen French toast sticks',items:[['ftSticks',.6],['syrup',.1],['bananas',.2]]},
+    {id:'pancakes',name:'Homemade pancakes (Krusteaz)',items:[['krusteaz',.3],['butter',.03],['syrup',.1],['bananas',.2]]},
+    {id:'swedish',name:'Swedish pancakes',items:[['flour',.08],['eggs',.5],['milk',.3],['butter',.1],['jam',.3]]}
+  ];
+  const LUNCHES = [
+    {id:'pbj',name:'PB&J & apple slices',items:[['bread',.5],['pb',.2],['jelly',.1],['apples',.25]]},
+    {id:'turkey',name:'Turkey & cheese sandwiches',items:[['bread',.5],['turkey',.6],['cheddarSl',.3],['apples',.2]]},
+    {id:'leftovers',name:'Dinner leftovers',items:[],note:'Best after soup, pasta and chicken nights'},
+    {id:'mac',name:"Mac & cheese with peas",items:[['macCheese',2],['milk',.05],['butter',.03],['peasCarrots',.5]]},
+    {id:'quesLunch',name:'Cheese quesadillas & fruit',items:[['tortillas',.5],['mexCheese',.5],['clementines',.15]]}
+  ];
+  const SNACKS = ['apples','bananas','clementines','babyCarrots','stringCheese','goldfish','pouches','granolaBars','pretzels','popcorn'];
+  const DEFAULT_BF = {cereal:2, frozen:2, frenchToast:1, pancakes:1, swedish:1};
+  const DEFAULT_LN = {pbj:3, turkey:2, leftovers:2};
+  const DEFAULT_SN = {apples:1, bananas:1, clementines:0, babyCarrots:1, stringCheese:1, goldfish:1, pouches:1, granolaBars:2, pretzels:1, popcorn:0};
+  const MILK_PER_WEEK = 1.5; // Lactaid for drinking, beyond what breakfasts use
+
+  const MEALS = [
+    {id:'sweetPotato',name:'Sweet potato, kale & sausage',items:[['sweetPot',1],['kale',1],['itSausage',1],['onion',1],['oil',.05],['spices',.05]],takeout:50,takeoutName:'Takeout bowls'},
+    {id:'chickenSoup',name:'Chicken noodle soup',items:[['thighs',1],['carrots',.4],['celery',.5],['onion',1],['noodles',1],['broth',2],['spices',.05]],takeout:45,takeoutName:'Panera for 5',good:'Makes about 2 lunches of leftovers.'},
+    {id:'tacoSalad',name:'Taco salad',items:[['beef',1.5],['romaine',.67],['roma',.5],['mexCheese',1],['sourCream',.5],['salsa',.5],['chips',1],['blackBeans',1],['tacoSeas',1]],takeout:58,takeoutName:'Chipotle for 5',dyeTip:'Nacho-flavored chips often contain Red 40. The plain Simple Truth chips on your list are checked.'},
+    {id:'pastaSausage',name:'Pasta & sausage',items:[['penne',1],['marinara',1],['itSausage',1],['parm',.2],['onion',.5],['spices',.05]],takeout:62,takeoutName:'Olive Garden to-go'},
+    {id:'grilledChicken',name:'Grilled chicken & veggies',items:[['breasts',1],['zucchini',2],['peppers',1],['rice',.35],['oil',.05],['spices',.05]],takeout:60,takeoutName:'Takeout plates',good:'Grill the whole pack. Leftover chicken turns into fried rice later in the week.'},
+    {id:'pizza',name:'Homemade pizza night',idea:1,items:[['pizzaCrust',2],['mozz',1],['pizzaSauce',1],['pepperoni',1]],takeout:48,takeoutName:'Delivery pizza',good:'The kids can top their own. It stands in for a delivery night.'},
+    {id:'pancakes',name:'Swedish pancakes & sausage',items:[['flour',.08],['eggs',.5],['milk',.3],['butter',.1],['bkSausage',1],['jam',.3],['bananas',.4]],takeout:52,takeoutName:'Diner breakfast',dyeTip:'Many strawberry syrups and toppings use Red 40. The Simple Truth spread on your list is checked.'},
+    {id:'grilledCheese',name:'Grilled cheese & tomato soup',items:[['sourdough',.7],['cheddarSl',.6],['butter',.15],['tomSoup',3]],takeout:42,takeoutName:'Panera for 5'},
+    {id:'burgers',name:'Cheeseburgers & fries',items:[['beef',2],['buns',.75],['cheddarSl',.4],['fries',.75],['romaine',.33],['roma',.5],['onion',.5],['condiments',.15],['spices',.05]],takeout:64,takeoutName:'Five Guys for 5'},
+    {id:'steak',name:'Steak night',items:[['sirloin',1],['russets',.4],['broccoli',1],['butter',.1],['spices',.05]],takeout:140,takeoutName:'Steakhouse for 5',good:'Top sirloin bought on sale and frozen keeps this a treat, not a splurge.'},
+    {id:'frozenPizza',name:'Frozen pizza night',items:[['frozenPizza',2],['babyCarrots',.5]],takeout:45,takeoutName:'Delivery pizza',good:'Two frozen pizzas and carrot sticks feed everyone for about a quarter of what delivery costs.'},
+    {id:'dateNight',name:'Date night (sitter & kids)',items:[['frozenPizza',1],['gfPizza',1],['babyCarrots',.3]],takeout:45,takeoutName:'Delivery for sitter & kids',good:'A gluten-free pizza for the sitter and a regular one for the kids. Your dinner out comes from the eating-out money.'},
+    {id:'friedRice',name:'Chicken fried rice',idea:1,items:[['rice',.35],['eggs',.25],['peasCarrots',1],['greenOnion',1],['soy',.1],['breasts',.3],['oil',.03]],takeout:50,takeoutName:'Chinese takeout',good:'Best the night after grilled chicken. It uses the leftovers.'},
+    {id:'quesadillas',name:'Bean & cheese quesadillas',idea:1,items:[['tortillas',1],['refried',1],['mexCheese',1],['salsa',.5],['sourCream',.3]],takeout:45,takeoutName:'Takeout tacos',good:'A good one to keep in the freezer for tired nights.'}
+  ];
+  const MEAL = Object.fromEntries(MEALS.map(m => [m.id, m]));
+  const SPECIAL = {
+    leftovers:{name:'Leftovers night',sub:'Use up the fridge'},
+    out:{name:'Eating out',sub:'Comes from the eating-out money'}
+  };
+  const AISLES = ['Produce','Meat','Dairy & eggs','Bakery','Pantry','Frozen'];
+  const DAYS = [['Sun',4],['Mon',5],['Tue',6],['Wed',7],['Thu',8],['Fri',9],['Sat',10]];
+  const WEEK_BUDGET = 400;
+  const ADULT_PORTIONS = 3.5;
+  const DEFAULT_PLAN = ['sweetPotato','chickenSoup','tacoSalad','pastaSausage','grilledChicken','pizza','pancakes'];
+
+  // ---------- State ----------
+  const KEY = 'fiveplates-v4';
+  let state = { plan: DEFAULT_PLAN.slice(), on: {}, helloHidden: false, everyHelloHidden: false,
+    bf: Object.assign({}, DEFAULT_BF), ln: Object.assign({}, DEFAULT_LN), sn: Object.assign({}, DEFAULT_SN) };
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (saved && Array.isArray(saved.plan) && saved.plan.length === 7) state = Object.assign(state, saved);
+  } catch (e) {}
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+
+  // ---------- Helpers ----------
+  const $ = id => document.getElementById(id);
+  const money = n => '$' + n.toFixed(2);
+  const whole = n => '$' + Math.round(n);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const ICON = {
+    check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+    swap:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4L4 7l3 3M4 7h13M17 20l3-3-3-3M20 17H7"/></svg>',
+    shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5.5c0 4.2-3 7.7-7 9.5-4-1.8-7-5.3-7-9.5V6z"/><path d="M8.8 12l2.2 2.2 4.2-4.4"/></svg>',
+    drop:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5s-6 6.6-6 10.9a6 6 0 0 0 12 0C18 10.1 12 3.5 12 3.5z"/></svg>',
+    leaf:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19c0-8 5-13 14-14-1 9-6 14-14 14z"/><path d="M5 19l7-7"/></svg>'
+  };
+  const safeBadge = '<span class="safe">' + ICON.shield + 'Dye-free, checked</span>';
+
+  function mealCost(m) { return m.items.reduce((t, [k, q]) => t + P[k].p * q, 0); }
+  function tier(c) { return c < 16 ? ['cheap','Easy on budget'] : c < 25 ? ['mid','Middle'] : ['treat','Treat']; }
+  function hasDye(m) { return m.items.some(([k]) => P[k].dye); }
+  function frac(q) {
+    const w = Math.floor(q + 1e-9), r = q - w;
+    const map = [[0,''],[.25,'¼'],[.33,'⅓'],[.5,'½'],[.67,'⅔'],[.75,'¾'],[1,'']];
+    let best = map[0]; for (const m of map) if (Math.abs(m[0] - r) < Math.abs(best[0] - r)) best = m;
+    const ww = best[0] === 1 ? w + 1 : w;
+    return (ww ? ww : '') + best[1];
+  }
+  function useText(q, p) {
+    if (q < .2) return 'A little';
+    if (Math.abs(q - Math.round(q)) < .01) return Math.round(q) === 1 ? (p.s || '1') : Math.round(q) + ' × ' + p.s;
+    return frac(q) + (q < 1 ? ' of ' : ' × ') + (p.s || 'pack');
+  }
+  function sharedWith(dayIdx, mealId) {
+    const m = MEAL[mealId]; if (!m) return [];
+    const mine = new Set(m.items.map(([k]) => k).filter(k => P[k].sh));
+    const out = [];
+    state.plan.forEach((id, i) => {
+      if (i === dayIdx || !MEAL[id]) return;
+      MEAL[id].items.forEach(([k]) => { if (mine.has(k) && !out.find(o => o.k === k)) out.push({k, day: DAYS[i][0]}); });
+    });
+    return out;
+  }
+
+  // Build the combined list: sum fractional needs per product, round up to whole packages.
+  // Each package's cost is split across dinners / breakfast / lunch / snacks by how much each uses.
+  const BUCKETS = ['dinner','breakfast','lunch','snack'];
+  const BF = Object.fromEntries(BREAKFASTS.map(x => [x.id, x]));
+  const LN = Object.fromEntries(LUNCHES.map(x => [x.id, x]));
+  function perDayCost(x) { return x.items.reduce((t, [k, q]) => t + P[k].p * q, 0); }
+  function buildList() {
+    const need = {}, from = {};
+    const add = (k, q, bucket, label) => {
+      if (!q) return;
+      const n = need[k] = need[k] || { dinner: 0, breakfast: 0, lunch: 0, snack: 0 };
+      n[bucket] += q; (from[k] = from[k] || new Set()).add(label);
+    };
+    state.plan.forEach(id => { const m = MEAL[id]; if (m) m.items.forEach(([k, q]) => add(k, q, 'dinner', m.name)); });
+    BREAKFASTS.forEach(b => { const d = state.bf[b.id] || 0; b.items.forEach(([k, q]) => add(k, q * d, 'breakfast', 'Breakfast')); });
+    add('milk', MILK_PER_WEEK, 'breakfast', 'Breakfast');
+    LUNCHES.forEach(l => { const d = state.ln[l.id] || 0; l.items.forEach(([k, q]) => add(k, q * d, 'lunch', 'Lunch')); });
+    SNACKS.forEach(k => add(k, state.sn[k] || 0, 'snack', 'Snack shelf'));
+    return Object.keys(need).map(k => {
+      const p = P[k], n = need[k], sum = BUCKETS.reduce((s, b) => s + n[b], 0);
+      const qty = Math.max(1, Math.ceil(sum - 0.02));
+      const on = k in state.on ? state.on[k] : !p.pantry;
+      const cost = qty * p.p;
+      const split = Object.fromEntries(BUCKETS.map(b => [b, cost * n[b] / sum]));
+      return { k, p, qty, cost, split, on, pantry: !!p.pantry, from: [...from[k]] };
+    });
+  }
+  function totals(rows) {
+    const t = { dinner: 0, breakfast: 0, lunch: 0, snack: 0, total: 0, count: 0 };
+    rows.filter(r => r.on).forEach(r => { t.count += 1; t.total += r.cost; BUCKETS.forEach(b => t[b] += r.split[b]); });
+    return t;
+  }
+
+  // ---------- Header meter ----------
+  function renderMeter() {
+    const t = totals(buildList());
+    const pct = x => Math.min(100, x / WEEK_BUDGET * 100);
+    const left = WEEK_BUDGET - t.total;
+    const note = left >= 0 ? whole(left) + ' left for household & extras' : 'A little over. Try swapping one thing.';
+    const segs = [['dinner','Dinners','--accent'],['breakfast','Breakfast','--butter'],['lunch','Lunch','--sky'],['snack','Snacks','--clay']];
+    $('meter').innerHTML =
+      '<div class="meter-line"><span><b class="num">' + whole(t.total) + '</b> <span class="meter-note">of your ' + whole(WEEK_BUDGET) + ' week</span></span><span class="meter-note">' + esc(note) + '</span></div>' +
+      '<div class="bar" aria-hidden="true">' + segs.map(s => '<span style="width:' + pct(t[s[0]]) + '%;background:var(' + s[2] + ')"></span>').join('') + '</div>' +
+      '<div class="legend">' + segs.map(s => '<span><i style="background:var(' + s[2] + ')"></i>' + s[1] + ' <b class="num">' + whole(t[s[0]]) + '</b></span>').join('') + '</div>';
+    $('listCount').textContent = t.count;
+    $('sendLabel').textContent = 'Send ' + t.count + ' items to King Soopers';
+  }
+
+  // ---------- Week ----------
+  function renderWeek() {
+    let h = '';
+    if (!state.helloHidden) {
+      h += '<div class="hello"><p><strong>Hi Jamie!</strong>Here\'s a week of dinners you already make. Tap one to see what it costs, or swap it. The shopping list builds itself.</p>' +
+        '<button class="x" id="helloX" type="button" aria-label="Hide this note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
+    }
+    state.plan.forEach((id, i) => {
+      const [dn, dd] = DAYS[i];
+      let name, meta;
+      if (MEAL[id]) {
+        const m = MEAL[id], c = mealCost(m), [tc, tl] = tier(c);
+        const sh = sharedWith(i, id);
+        name = m.name;
+        meta = '<span class="num">' + money(c) + '</span><span class="chip ' + tc + '">' + tl + '</span>' +
+          (m.idea ? '<span class="chip idea">New idea</span>' : '') +
+          (sh.length ? '<span class="chip share">Shares ' + esc(P[sh[0].k].sh) + ' with ' + sh[0].day + '</span>' : '');
+      } else {
+        const s = SPECIAL[id] || SPECIAL.leftovers;
+        name = s.name; meta = '<span>' + esc(s.sub) + '</span>';
+      }
+      h += '<div class="day' + (MEAL[id] ? '' : ' off') + '">' +
+        '<div class="date"><small>' + dn + '</small><b>' + dd + '</b></div>' +
+        '<button class="meal-btn" type="button" data-open="' + i + '"><span class="meal-name">' + esc(name) + '</span><span class="meal-meta">' + meta + '</span></button>' +
+        '<button class="swap" type="button" data-swap="' + i + '" aria-label="Swap ' + dn + ' dinner">' + ICON.swap + 'Swap</button></div>';
+    });
+    h += '<p class="hint">Prices are estimates for now. Real King Soopers prices come later.</p>';
+    $('screen-week').innerHTML = h;
+    const hx = $('helloX'); if (hx) hx.onclick = () => { state.helloHidden = true; save(); renderWeek(); };
+  }
+
+  // ---------- Everyday: breakfast, lunch, snacks ----------
+  const MINUS = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>';
+  const PLUS = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12M12 6v12"/></svg>';
+  function stepper(group, id, n, canAdd, label) {
+    return '<span class="stepper"><button type="button" data-step="' + group + '" data-id="' + id + '" data-d="-1" aria-label="Fewer ' + esc(label) + '"' + (n <= 0 ? ' disabled' : '') + '>' + MINUS + '</button>' +
+      '<span class="num" aria-live="polite">' + n + '</span>' +
+      '<button type="button" data-step="' + group + '" data-id="' + id + '" data-d="1" aria-label="More ' + esc(label) + '"' + (canAdd ? '' : ' disabled') + '>' + PLUS + '</button></span>';
+  }
+  function daySection(title, unit, list, picks, group, bucketCost, tip) {
+    const used = list.reduce((s, x) => s + (picks[x.id] || 0), 0);
+    let h = '<section class="sec"><div class="sec-head"><div><h2>' + title + '</h2><small>' + used + ' of 7 ' + unit + ' planned</small>' +
+      '<div class="days-dots" aria-hidden="true">' + Array.from({length: 7}, (_, i) => '<i class="' + (i < used ? 'on' : '') + '"></i>').join('') + '</div></div>' +
+      '<div class="sec-cost num">' + whole(bucketCost) + '<small>this week</small></div></div>';
+    list.forEach(x => {
+      const n = picks[x.id] || 0, c = perDayCost(x);
+      const dye = x.items.some(([k]) => P[k].dye);
+      const needsOk = !x.needs || state.plan.includes(x.needs);
+      const sub = (c ? money(c) + ' a day' : 'Free') + (x.note ? ' · ' + esc(x.note) : '') + (!needsOk ? ' · Add pancake night first' : '');
+      h += '<div class="erow' + (n ? '' : ' zero') + '"><div style="min-width:0"><div class="erow-name">' + esc(x.name) + '</div><div class="erow-sub"><span>' + sub + '</span>' + (dye ? safeBadge : '') + '</div></div>' +
+        stepper(group, x.id, n, used < 7 && needsOk, x.name) + '</div>';
+    });
+    if (tip) h += '<p class="sec-tip">' + tip + '</p>';
+    return h + '</section>';
+  }
+  function renderEvery() {
+    const t = totals(buildList());
+    let h = '';
+    if (!state.everyHelloHidden) {
+      h += '<div class="hello"><p><strong>No daily planning needed</strong>Just pick how many mornings and lunches of each. The app works out how much to buy.</p>' +
+        '<button class="x" id="everyX" type="button" aria-label="Hide this note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>';
+    }
+    const homemade = perDayCost(BF.pancakes), frozen = perDayCost(BF.frozen);
+    h += daySection('Breakfast', 'mornings', BREAKFASTS, state.bf, 'bf', t.breakfast,
+      'Krusteaz pancakes cost about ' + money(homemade) + ' a morning vs ' + money(frozen) + ' for frozen. Make a double batch on the weekend and freeze the extras. They go in the toaster just like the frozen kind. Includes about 1½ half-gallons of Lactaid milk for drinking.');
+    h += daySection('Lunch', 'lunches', LUNCHES, state.ln, 'ln', t.lunch, null);
+    const packs = SNACKS.reduce((s, k) => s + (state.sn[k] || 0), 0);
+    h += '<section class="sec"><div class="sec-head"><div><h2>Snack shelf</h2><small>' + packs + ' packs for the week</small></div><div class="sec-cost num">' + whole(t.snack) + '<small>this week</small></div></div>';
+    SNACKS.forEach(k => {
+      const p = P[k], n = state.sn[k] || 0;
+      h += '<div class="erow' + (n ? '' : ' zero') + '"><div style="min-width:0"><div class="erow-name">' + esc(p.n) + '</div><div class="erow-sub"><span>' + money(p.p) + ' · ' + esc(p.s) + '</span>' + (p.dye ? safeBadge : '') + '</div></div>' +
+        stepper('sn', k, n, n < 4, p.n) + '</div>';
+    });
+    h += '<p class="sec-tip">Fill a snack bin on Sunday. When it\'s empty, it\'s fruit until next week. Snacks grabbed in the aisle are an easy way to go over, and they\'re where dyes hide most.</p></section>';
+    $('screen-every').innerHTML = h;
+    const ex = $('everyX'); if (ex) ex.onclick = () => { state.everyHelloHidden = true; save(); renderEvery(); };
+  }
+
+  // ---------- List ----------
+  function renderList() {
+    const rows = buildList(), t = totals(rows);
+    let h = '<div class="list-summary"><div><div class="eyebrow">For pickup</div><div class="big num">' + money(t.total) + '</div><small>' + t.count + ' items · whole packages, combined across meals</small></div></div>';
+    const main = rows.filter(r => !r.pantry);
+    AISLES.forEach(a => {
+      const rs = main.filter(r => r.p.a === a).sort((x, y) => x.p.n.localeCompare(y.p.n));
+      if (!rs.length) return;
+      const sub = rs.filter(r => r.on).reduce((s, r) => s + r.cost, 0);
+      h += '<div class="group"><div class="group-head"><h3>' + esc(a) + '</h3><span class="num">' + money(sub) + '</span></div><div class="items">' + rs.map(itemRow).join('') + '</div></div>';
+    });
+    const pan = rows.filter(r => r.pantry);
+    if (pan.length) {
+      h += '<div class="group"><div class="group-head"><h3>Probably in the pantry</h3><span>Tap if you need it</span></div><div class="items">' + pan.map(itemRow).join('') + '</div></div>';
+    }
+    h += '<p class="hint">Uncheck anything you already have. It won\'t go in the cart.</p>';
+    $('screen-list').innerHTML = h;
+  }
+  function itemRow(r) {
+    const src = r.from.length > 2 ? r.from.length + ' uses' : r.from.join(', ');
+    return '<button class="item" type="button" data-item="' + r.k + '" aria-pressed="' + r.on + '">' +
+      '<span class="box">' + ICON.check + '</span>' +
+      '<span class="item-main"><span class="item-name">' + esc(r.p.n) + '</span><span class="item-sub"><span>' + esc(src) + '</span>' + (r.p.dye ? safeBadge : '') + '</span></span>' +
+      '<span class="item-right"><span class="item-price num">' + money(r.cost) + '</span><br><span class="item-qty">' + (r.qty > 1 ? r.qty + ' × ' : '') + esc(r.p.s || '1') + '</span></span></button>';
+  }
+
+  // ---------- Meals library ----------
+  function renderMeals() {
+    const list = MEALS.slice().sort((a, b) => mealCost(a) - mealCost(b));
+    let h = '<p class="lib-note">Cheapest first. Every meal is sized for your family: two adults and three kids eat about 3½ adult portions.</p>';
+    list.forEach(m => {
+      const c = mealCost(m), [tc, tl] = tier(c);
+      h += '<button class="lib" type="button" data-meal="' + m.id + '"><span style="min-width:0"><span class="meal-name">' + esc(m.name) + '</span><span class="meal-meta"><span class="chip ' + tc + '">' + tl + '</span>' + (m.idea ? '<span class="chip idea">New idea</span>' : '') + '<span>vs ' + whole(m.takeout) + ' takeout</span></span></span>' +
+        '<span class="lib-cost"><b class="num">' + money(c) + '</b><small class="num">' + money(c / ADULT_PORTIONS) + ' / portion</small></span></button>';
+    });
+    $('screen-meals').innerHTML = h;
+  }
+
+  // ---------- Sheets ----------
+  function openSheet(head, body) {
+    $('sheetHead').innerHTML = head; $('sheetBody').innerHTML = body; $('sheetBody').scrollTop = 0;
+    $('sheet').classList.add('open'); $('scrim').classList.add('open');
+    setTimeout(() => $('sheetClose').focus(), 50);
+  }
+  function closeSheet() { $('sheet').classList.remove('open'); $('scrim').classList.remove('open'); sendTimer && clearInterval(sendTimer); }
+
+  function mealSheet(id, dayIdx) {
+    const m = MEAL[id];
+    if (!m) { swapSheet(dayIdx); return; }
+    const c = mealCost(m), [tc, tl] = tier(c);
+    const bought = m.items.filter(([k]) => !P[k].pantry).reduce((t, [k, q]) => t + Math.ceil(q - .02) * P[k].p, 0);
+    const head = '<div class="eyebrow">' + (dayIdx != null ? DAYS[dayIdx][0] + ' ' + DAYS[dayIdx][1] + ' Oct' : 'Meal card') + '</div><h2 id="sheetTitle">' + esc(m.name) + '</h2>';
+    let b = '<div class="stats">' +
+      '<div class="stat"><b class="num">' + money(c) + '</b><small>True cost of this dinner</small></div>' +
+      '<div class="stat"><b class="num">' + money(c / ADULT_PORTIONS) + '</b><small>Per adult portion</small></div>' +
+      '<div class="stat"><b>All 5</b><small>About 3½ adult portions</small></div></div>';
+    const max = Math.max(m.takeout, bought);
+    b += '<div class="vs"><div class="vs-row"><span>Made at home</span><span class="vs-bar"><span style="width:' + (c / max * 100) + '%;background:var(--accent)"></span></span><b class="num">' + whole(c) + '</b></div>' +
+      '<div class="vs-row"><span>' + esc(m.takeoutName) + '</span><span class="vs-bar"><span style="width:' + (m.takeout / max * 100) + '%;background:var(--butter)"></span></span><b class="num">' + whole(m.takeout) + '</b></div>' +
+      '<p>Cooking this saves about ' + whole(m.takeout - c) + '.</p></div>';
+    if (m.dyeTip) b += '<div class="tip dye">' + ICON.drop + '<span>' + esc(m.dyeTip) + '</span></div>';
+    else if (hasDye(m)) b += '<div class="tip good">' + ICON.shield + '<span>Every product here that could have dyes is on your checked list.</span></div>';
+    if (m.good) b += '<div class="tip good">' + ICON.leaf + '<span>' + esc(m.good) + '</span></div>';
+    b += '<div><h3 style="margin-bottom:4px">What goes into it</h3>';
+    m.items.forEach(([k, q]) => {
+      const p = P[k];
+      b += '<div class="ing"><span>' + esc(p.n) + (p.pantry ? ' <span class="pantry-tag">pantry</span>' : '') + '<small>' + esc(useText(q, p)) + (p.dye ? ' · dye-free, checked' : '') + '</small></span><b class="num">' + money(p.p * q) + '</b></div>';
+    });
+    b += '</div><p class="why">True cost counts only what this meal uses. If you bought everything just for this dinner, the receipt would be about ' + whole(bought) + '. The rest carries into other meals.</p>';
+    if (dayIdx != null) b += '<button class="cta ghost" type="button" data-swap="' + dayIdx + '">' + ICON.swap + 'Swap this dinner</button>';
+    openSheet(head, b);
+  }
+
+  function swapSheet(dayIdx) {
+    const cur = state.plan[dayIdx];
+    const head = '<div class="eyebrow">' + DAYS[dayIdx][0] + ' ' + DAYS[dayIdx][1] + ' Oct</div><h2 id="sheetTitle">Pick a dinner</h2>';
+    const list = MEALS.slice().sort((a, b) => mealCost(a) - mealCost(b));
+    let b = '<div class="opts">';
+    list.forEach(m => {
+      const c = mealCost(m), [tc, tl] = tier(c);
+      const sh = sharedWith(dayIdx, m.id).map(s => P[s.k].sh).filter((v, i, a) => a.indexOf(v) === i);
+      const used = state.plan.some((id, i) => i !== dayIdx && id === m.id);
+      b += '<button class="opt' + (cur === m.id ? ' current' : '') + '" type="button" data-pick="' + m.id + '" data-day="' + dayIdx + '"><span style="min-width:0"><span class="meal-name">' + esc(m.name) + '</span><span class="meal-meta"><span class="chip ' + tc + '">' + tl + '</span>' +
+        (m.idea ? '<span class="chip idea">New idea</span>' : '') +
+        (sh.length ? '<span class="chip share">Shares ' + esc(sh.slice(0, 2).join(' & ')) + '</span>' : '') +
+        (used ? '<span>Already this week</span>' : '') + '</span></span><span class="opt-cost num">' + money(c) + '</span></button>';
+    });
+    b += '<div class="opts-row">' +
+      '<button class="opt' + (cur === 'leftovers' ? ' current' : '') + '" type="button" data-pick="leftovers" data-day="' + dayIdx + '"><span class="meal-name">Leftovers</span><span class="opt-cost">$0</span></button>' +
+      '<button class="opt' + (cur === 'out' ? ' current' : '') + '" type="button" data-pick="out" data-day="' + dayIdx + '"><span class="meal-name">Eat out</span><span class="opt-cost">—</span></button></div>';
+    b += '</div>';
+    openSheet(head, b);
+  }
+
+  let sendTimer = null;
+  function sendSheet() {
+    const rows = buildList().filter(r => r.on);
+    const head = '<div class="eyebrow">Pickup order</div><h2 id="sheetTitle">Send to your cart</h2>';
+    const b = '<div class="store"><span class="store-logo">KS</span><p><b>Your King Soopers</b>Items go into your online cart. You pick the pickup time and check out in the King Soopers app.</p></div>' +
+      '<div class="send-list" id="sendList">' + rows.map((r, i) => '<div class="send-row" id="sr' + i + '"><span><i></i>' + esc(r.p.n) + '</span><span class="num">' + (r.qty > 1 ? '×' + r.qty : '') + '</span></div>').join('') + '</div>' +
+      '<div class="progress" aria-hidden="true"><span id="sendProg"></span></div>' +
+      '<button class="cta" type="button" id="doSend">Add ' + rows.length + ' items · ' + money(rows.reduce((s, r) => s + r.cost, 0)) + '</button>' +
+      '<p class="preview-note">Preview only. Nothing is sent to King Soopers yet.</p>';
+    openSheet(head, b);
+    $('doSend').onclick = () => {
+      $('doSend').disabled = true; $('doSend').textContent = 'Adding to cart…';
+      const reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+      let i = 0;
+      const step = () => {
+        const el = $('sr' + i);
+        if (el) { el.classList.add('done'); el.querySelector('i').textContent = '✓'; if (!reduce) el.scrollIntoView({block:'nearest'}); }
+        i++; $('sendProg').style.width = (i / rows.length * 100) + '%';
+        if (i >= rows.length) { clearInterval(sendTimer); sendTimer = null; setTimeout(() => sentSheet(rows.length), reduce ? 0 : 350); }
+      };
+      if (reduce) { while (i < rows.length) step(); } else sendTimer = setInterval(step, 70);
+    };
+  }
+  function sentSheet(n) {
+    openSheet('<div class="eyebrow">Done</div><h2 id="sheetTitle">It\'s in your cart</h2>',
+      '<div class="done-mark">' + ICON.check + '</div>' +
+      '<div class="center"><h2>' + n + ' items added</h2><p>Open the King Soopers app, pick a pickup time, and check out. Nothing to type or search for.</p></div>' +
+      '<button class="cta" type="button" id="doneBtn">Done</button>' +
+      '<p class="preview-note">Preview only. In the real version this fills your actual cart.</p>');
+    $('doneBtn').onclick = closeSheet;
+  }
+
+  // ---------- Suggest a week ----------
+  function suggest() {
+    const pool = MEALS.filter(m => m.id !== 'steak' && m.id !== 'friedRice');
+    let best = null;
+    for (let t = 0; t < 60; t++) {
+      const pick = pool.slice().sort(() => Math.random() - .5).slice(0, 7);
+      if (Math.random() < .2) pick[Math.floor(Math.random() * 7)] = MEAL.steak;
+      const ids = pick.map(m => m.id);
+      const gi = ids.indexOf('grilledChicken');
+      if (gi > -1 && gi < 5 && Math.random() < .6) ids[gi + 2] = 'friedRice';
+      const cost = ids.reduce((s, id) => s + (MEAL[id] ? mealCost(MEAL[id]) : 0), 0);
+      let shares = 0; ids.forEach((id, i) => { const saved = state.plan; state.plan = ids; shares += sharedWith(i, id).length; state.plan = saved; });
+      const score = shares * 3 - cost / 5;
+      if (!best || score > best.score) best = { ids, score };
+    }
+    state.plan = best.ids; save(); renderAll(); toast('New week suggested');
+  }
+
+  function toast(msg) {
+    const t = $('toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 1600);
+  }
+
+  // ---------- Tabs & events ----------
+  let tab = 'week';
+  const TITLES = { week: 'Dinners this week', every: 'Breakfast, lunch & snacks', list: 'Shopping list', meals: 'Our dinners' };
+  function setTab(t) {
+    tab = t;
+    ['week','every','list','meals'].forEach(x => { $('screen-' + x).hidden = x !== t; $('tab-' + x).setAttribute('aria-selected', x === t); });
+    $('title').textContent = TITLES[t];
+    $('ctaWrap').hidden = t !== 'list';
+    $('suggestBtn').hidden = t !== 'week';
+    $('screen-' + t).scrollTop = 0;
+  }
+  // Leftover-pancake breakfasts only make sense when pancake night is on the plan.
+  function normalize() {
+    BREAKFASTS.forEach(b => {
+      if (b.needs && !state.plan.includes(b.needs) && state.bf[b.id]) { state.bf.cereal = (state.bf.cereal || 0) + state.bf[b.id]; state.bf[b.id] = 0; }
+    });
+  }
+  function renderAll() { normalize(); renderMeter(); renderWeek(); renderEvery(); renderList(); renderMeals(); }
+
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step]');
+    if (!el) return;
+    if (el.dataset.tab) setTab(el.dataset.tab);
+    else if (el.dataset.step) {
+      const g = state[el.dataset.step], id = el.dataset.id;
+      g[id] = Math.max(0, (g[id] || 0) + (+el.dataset.d));
+      const sc = $('screen-every').scrollTop;
+      save(); renderMeter(); renderEvery(); renderList();
+      $('screen-every').scrollTop = sc;
+      const again = document.querySelector('[data-step="' + el.dataset.step + '"][data-id="' + id + '"][data-d="' + el.dataset.d + '"]');
+      if (again && !again.disabled) again.focus();
+    }
+    else if (el.dataset.open != null) { const i = +el.dataset.open; mealSheet(state.plan[i], i); }
+    else if (el.dataset.swap != null) swapSheet(+el.dataset.swap);
+    else if (el.dataset.pick) {
+      const d = +el.dataset.day; state.plan[d] = el.dataset.pick; save(); renderAll(); closeSheet();
+      toast(DAYS[d][0] + ': ' + (MEAL[el.dataset.pick] ? MEAL[el.dataset.pick].name : SPECIAL[el.dataset.pick].name));
+    }
+    else if (el.dataset.item) {
+      const k = el.dataset.item, on = el.getAttribute('aria-pressed') !== 'true';
+      state.on[k] = on; save(); renderMeter(); renderList();
+    }
+    else if (el.dataset.meal) mealSheet(el.dataset.meal, null);
+  });
+  $('scrim').onclick = closeSheet;
+  $('sheetClose').onclick = closeSheet;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+  $('suggestBtn').onclick = suggest;
+  $('sendBtn').onclick = sendSheet;
+
+  renderAll(); setTab('week');
+})();
+</script>
