@@ -13,7 +13,7 @@
     {
       "binding": "DB",
       "database_name": "five-plates",
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "66c70954-9db8-4db3-81c0-68102058ff29",
       "migrations_dir": "migrations"
     }
   ],
