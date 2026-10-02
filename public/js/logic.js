@@ -62,6 +62,7 @@ export function normalizeWeek(catalog, week) {
     ln: ints(w.ln, d.ln),
     sn: ints(w.sn, d.sn),
     on: w.on && typeof w.on === 'object' ? Object.fromEntries(Object.entries(w.on).map(([k, v]) => [k, !!v])) : {},
+    sentAt: +w.sentAt || 0,
     updatedAt: +w.updatedAt || 0
   };
 }

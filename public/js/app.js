@@ -25,7 +25,7 @@ const local = {
 };
 
 function saveCache() {
-  local.set(CACHE_KEY, { user: app.user, catalog: app.catalog, weeks: app.weeks, dirty: [...app.dirty] });
+  local.set(CACHE_KEY, { user: app.user, kroger: app.kroger, catalog: app.catalog, weeks: app.weeks, dirty: [...app.dirty] });
 }
 
 // ---------- Server ----------
@@ -47,7 +47,8 @@ async function loadWeek(id, { quiet } = {}) {
   catch { setSync('offline'); return false; }
   if (res.status === 401) { signOutLocal(); return false; }
   if (res.status !== 200) { if (!quiet) toast('Couldn\'t load. Showing what\'s saved on this phone.'); return false; }
-  const { user, catalog, week, previous } = res.data;
+  const { user, catalog, week, previous, kroger } = res.data;
+  app.kroger = kroger || { connected: false };
   app.user = user;
   app.catalog = catalog;
   if (week) {
@@ -79,7 +80,7 @@ async function flush() {
   for (const id of [...app.dirty]) {
     const w = app.weeks[id];
     let res;
-    try { res = await api('/api/week/' + id, { method: 'PUT', body: { plan: w.plan, bf: w.bf, ln: w.ln, sn: w.sn, on: w.on } }); }
+    try { res = await api('/api/week/' + id, { method: 'PUT', body: { plan: w.plan, bf: w.bf, ln: w.ln, sn: w.sn, on: w.on, sentAt: w.sentAt || 0 } }); }
     catch { setSync('offline'); retryTimer = setTimeout(flush, 15000); return; }
     if (res.status === 401) { signOutLocal(); return; }
     if (res.status !== 200) { setSync('offline'); retryTimer = setTimeout(flush, 15000); return; }
@@ -104,6 +105,7 @@ async function boot() {
   if (cached && cached.user && cached.catalog) {
     app.user = cached.user;
     app.catalog = cached.catalog;
+    app.kroger = cached.kroger || { connected: false };
     app.weeks = cached.weeks || {};
     app.dirty = new Set(cached.dirty || []);
     if (!app.weeks[app.current]) app.weeks[app.current] = newWeek(app.catalog, null, seededRandom(app.current));
@@ -172,6 +174,7 @@ const ICON = {
   right: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>',
   minus: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>',
   plus: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12M12 6v12"/></svg>',
+  cart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="20" r="1.4"/><circle cx="18" cy="20" r="1.4"/><path d="M2.5 3.5h3l2.4 11.2a1.5 1.5 0 0 0 1.5 1.2h8.3a1.5 1.5 0 0 0 1.5-1.1L21 8H6.3"/></svg>',
   copy: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2.5"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>'
 };
 
@@ -215,7 +218,7 @@ function renderShell() {
   <main class="screen" id="screen-list" role="tabpanel" aria-label="Shopping list" hidden></main>
   <main class="screen" id="screen-meals" role="tabpanel" aria-label="Our dinners" hidden></main>
   <div class="cta-wrap" id="ctaWrap" hidden>
-    <button class="cta" id="sendBtn" type="button">${ICON.copy}<span id="sendLabel">Copy list</span></button>
+    <button class="cta" id="sendBtn" type="button">${ICON.cart}<span id="sendLabel">Send to King Soopers</span></button>
   </div>
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button class="tab" role="tab" aria-selected="true" data-tab="week" id="tab-week" type="button">
@@ -242,7 +245,7 @@ function renderShell() {
   $('scrim').onclick = closeSheet;
   $('sheetClose').onclick = closeSheet;
   $('suggestBtn').onclick = suggest;
-  $('sendBtn').onclick = copySheet;
+  $('sendBtn').onclick = sendSheet;
   $('prevWeek').onclick = () => goWeek(-7);
   $('nextWeek').onclick = () => goWeek(7);
   setSync(app.dirty.size ? 'saving' : app.sync);
@@ -408,7 +411,7 @@ function renderList() {
   if (pan.length) h += '<div class="group"><div class="group-head"><h3>Probably in the pantry</h3><span>Tap if you need it</span></div><div class="items">' + pan.map(itemRow).join('') + '</div></div>';
   h += '<p class="hint">Uncheck anything you already have.</p>';
   $('screen-list').innerHTML = h;
-  $('sendLabel').textContent = 'Copy list · ' + t.count + ' items';
+  $('sendLabel').textContent = 'Send ' + t.count + ' items to King Soopers';
 }
 
 // ---------- Meals ----------
@@ -604,6 +607,55 @@ async function chooseProduct(key, productId) {
   renderAll();
   closeSheet();
   toast('Saved: ' + displayName(res.data.product));
+}
+
+// ---------- Send to King Soopers ----------
+function sendSheet() {
+  const c = app.catalog, rows = buildList(c, week()).filter(r => r.on);
+  if (!app.kroger || !app.kroger.connected) {
+    openSheet('<div class="eyebrow">One-time setup</div><h2 id="sheetTitle">Connect King Soopers</h2>',
+      '<div class="store"><span class="store-logo">KS</span><p><b>Link the King Soopers account you order pickup with</b>You’ll sign in on King Soopers’ own page. Five Plates never sees the password, and it can only add items to the cart. It can’t check out or pay.</p></div>' +
+      '<a class="cta" href="/api/kroger/connect">' + ICON.cart + 'Connect King Soopers</a>' +
+      '<p class="why">Do this once. After that, the button sends your whole list to the cart. When King Soopers says it’s connected, come back to Five Plates.</p>' +
+      '<button class="cta ghost" type="button" id="copyInstead">' + ICON.copy + 'Copy the list instead</button>');
+    $('copyInstead').onclick = copySheet;
+    return;
+  }
+  const linked = rows.filter(r => r.product.kroger && !r.product.kroger.unavailable);
+  const missing = rows.filter(r => !r.product.kroger || r.product.kroger.unavailable);
+  const sentAt = week().sentAt;
+  const total = linked.reduce((s, r) => s + r.cost, 0);
+  let b = '<div class="store"><span class="store-logo">KS</span><p><b>' + esc((c.settings.krogerStore && c.settings.krogerStore.name) || 'Your King Soopers') + '</b>Items go into your cart. You pick the pickup time and check out in the King Soopers app.</p></div>';
+  if (sentAt) b += '<div class="tip dye">' + ICON.eye + '<span>You already sent this week’s list on ' + esc(new Date(sentAt).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })) + '. Sending again adds everything a second time, so clear the cart first if you’re starting over.</span></div>';
+  if (missing.length) b += '<p class="why">' + missing.length + ' item' + (missing.length > 1 ? 's aren’t' : ' isn’t') + ' linked to a King Soopers product and will be skipped: ' + esc(missing.map(r => r.product.name).join(', ')) + '.</p>';
+  b += '<div class="send-list">' + linked.map(r => '<div class="send-row done"><span>' + esc(displayName(r.product)) + '</span><span class="num">' + (r.qty > 1 ? '×' + r.qty : '') + '</span></div>').join('') + '</div>' +
+    '<button class="cta" type="button" id="doSend">' + ICON.cart + 'Add ' + linked.length + ' items · about ' + money(total) + '</button>' +
+    '<button class="textlink" type="button" id="copyInstead">Copy the list instead</button>';
+  openSheet('<div class="eyebrow">Pickup order</div><h2 id="sheetTitle">Send to your cart</h2>', b);
+  $('copyInstead').onclick = copySheet;
+  $('doSend').onclick = async () => {
+    const btn = $('doSend');
+    btn.disabled = true; btn.textContent = 'Adding to your cart…';
+    let res;
+    try { res = await api('/api/kroger/cart', { method: 'POST', body: { items: linked.map(r => ({ key: r.key, qty: r.qty })) } }); }
+    catch { btn.disabled = false; btn.textContent = 'Try again'; toast('You’re offline. Try again when you have signal.'); return; }
+    if (res.status === 401) { signOutLocal(); return; }
+    if (res.status === 409) { app.kroger = { connected: false }; saveCache(); sendSheet(); return; }
+    if (res.status !== 200) { btn.disabled = false; btn.textContent = 'Try again'; toast(res.data?.error || 'That didn’t go through. Try again.'); return; }
+    week().sentAt = Date.now();
+    markDirty();
+    sentSheet(res.data);
+  };
+}
+
+function sentSheet(r) {
+  openSheet('<div class="eyebrow">Done</div><h2 id="sheetTitle">It’s in your cart</h2>',
+    '<div class="done-mark">' + ICON.check + '</div>' +
+    '<div class="center"><h2>' + r.added + ' items added</h2><p>Open the King Soopers app, pick a pickup time, and check out.</p></div>' +
+    (r.skipped && r.skipped.length ? '<p class="why">Skipped (add these yourself): ' + esc(r.skipped.join(', ')) + '.</p>' : '') +
+    '<a class="cta" href="https://www.kingsoopers.com/cart" target="_blank" rel="noopener">Open King Soopers</a>' +
+    '<button class="cta ghost" type="button" id="doneBtn">Done</button>');
+  $('doneBtn').onclick = closeSheet;
 }
 
 function copySheet() {

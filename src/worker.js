@@ -1,5 +1,8 @@
 import { SEED_CATALOG } from './seed.js';
-import { KrogerError, findStores, searchProducts, productsById, bestMatch, currentPrice } from './kroger.js';
+import {
+  KrogerError, findStores, searchProducts, productsById, bestMatch, currentPrice,
+  authorizeUrl, exchangeCode, freshUserToken, addToCart
+} from './kroger.js';
 
 // Static files in /public are served straight from Cloudflare's edge; only /api/* reaches this code.
 const COOKIE = 'fp_session';
@@ -32,6 +35,8 @@ async function route(request, env, url) {
   if (pathname === '/api/login' && method === 'POST') return login(request, env);
   if (pathname === '/api/logout' && method === 'POST') return json({ ok: true }, 200, { 'Set-Cookie': clearCookie() });
 
+  if (pathname === '/api/kroger/callback' && method === 'GET') return krogerCallback(env, url);
+
   const user = await sessionUser(request, env);
   if (!user) return json({ error: 'signin' }, 401);
   if (method !== 'GET' && !sameOrigin(request, url)) return json({ error: 'Bad origin' }, 403);
@@ -41,7 +46,9 @@ async function route(request, env, url) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(id)) return json({ error: 'Missing week' }, 400);
     const [catalog, week] = await Promise.all([getCatalog(env), getDoc(env, 'week:' + id)]);
     const previous = week ? null : await previousWeek(env, id);
-    return json({ user, catalog, week, previous });
+    const link = await getDoc(env, 'kroger:user');
+    const kroger = { connected: !!link, connectedBy: link ? link.connectedBy : null };
+    return json({ user, catalog, week, previous, kroger });
   }
 
   let m = pathname.match(WEEK_RE);
@@ -77,6 +84,47 @@ async function route(request, env, url) {
     if (!body || !body.products || !Array.isArray(body.dinners)) return json({ error: 'Invalid catalog' }, 400);
     await putDoc(env, 'catalog', body);
     return json({ ok: true });
+  }
+
+  // ---------- King Soopers cart ----------
+  if (pathname === '/api/kroger/connect' && method === 'GET') {
+    const payload = b64url(new TextEncoder().encode(JSON.stringify({ e: user, x: Date.now() + 15 * 60_000, n: crypto.randomUUID() })));
+    const state = payload + '.' + await sign(payload, env.SESSION_SECRET);
+    return Response.redirect(authorizeUrl(env, url.origin + '/api/kroger/callback', state), 302);
+  }
+
+  if (pathname === '/api/kroger/disconnect' && method === 'POST') {
+    await env.DB.prepare('DELETE FROM docs WHERE id = ?').bind('kroger:user').run();
+    return json({ ok: true });
+  }
+
+  if (pathname === '/api/kroger/cart' && method === 'POST') {
+    const body = await readJson(request);
+    const want = Array.isArray(body?.items) ? body.items.slice(0, 150) : null;
+    if (!want) return json({ error: 'Nothing to send' }, 400);
+    let link = await getDoc(env, 'kroger:user');
+    if (!link) return json({ error: 'connect' }, 409);
+    const fresh = await freshUserToken(env, link);
+    if (!fresh) {
+      await env.DB.prepare('DELETE FROM docs WHERE id = ?').bind('kroger:user').run();
+      return json({ error: 'connect' }, 409);
+    }
+    if (fresh.access !== link.access) await putDoc(env, 'kroger:user', fresh);
+    const products = (await getCatalog(env)).products;
+    const items = [], skipped = [];
+    for (const it of want) {
+      const p = products[String(it.key)];
+      const quantity = Math.max(1, Math.min(24, Math.round(+it.qty || 1)));
+      if (p && p.kroger && p.kroger.upc && !p.kroger.unavailable) items.push({ upc: p.kroger.upc, quantity });
+      else skipped.push(p ? p.name : String(it.key));
+    }
+    if (!items.length) return json({ added: 0, skipped });
+    const result = await addToCart(fresh.access, items);
+    if (!result.ok) {
+      if (result.status === 401) return json({ error: 'connect' }, 409);
+      return json({ error: 'King Soopers did not accept the order (' + result.status + '). Try again in a minute.' }, 502);
+    }
+    return json({ added: items.length, units: items.reduce((s, i) => s + i.quantity, 0), skipped });
   }
 
   // ---------- King Soopers ----------
@@ -158,6 +206,29 @@ async function route(request, env, url) {
   }
 
   return json({ error: 'Not found' }, 404);
+}
+
+async function krogerCallback(env, url) {
+  const page = (title, text) => new Response(
+    '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Five Plates</title><body style="font-family:system-ui,sans-serif;background:#F3F6F2;color:#17221E;padding:40px 24px;max-width:460px;margin:auto">' +
+    '<h1 style="font-size:26px">' + title + '</h1><p style="font-size:17px;line-height:1.5">' + text + '</p>' +
+    '<p><a href="/" style="display:inline-block;background:#1F5E55;color:#fff;padding:14px 20px;border-radius:14px;text-decoration:none;font-weight:700">Back to Five Plates</a></p></body>',
+    { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
+  const code = url.searchParams.get('code');
+  const [payload, sig] = String(url.searchParams.get('state') || '').split('.');
+  let who = null;
+  if (payload && sig) {
+    const key = await hmacKey(env.SESSION_SECRET);
+    if (await crypto.subtle.verify('HMAC', key, unb64url(sig), new TextEncoder().encode(payload))) {
+      try { const s = JSON.parse(new TextDecoder().decode(unb64url(payload))); if (s.x > Date.now()) who = s.e; } catch { /* bad state */ }
+    }
+  }
+  if (!code || !who) return page('That link expired', 'Open Five Plates and tap Connect King Soopers again.');
+  const tokens = await exchangeCode(env, code, url.origin + '/api/kroger/callback');
+  if (!tokens) return page('King Soopers did not connect', 'Something went wrong on the King Soopers side. Open Five Plates and try Connect King Soopers again.');
+  await putDoc(env, 'kroger:user', { ...tokens, connectedBy: who, connectedAt: Date.now() });
+  return page('King Soopers is connected', 'You can close this page. In Five Plates, tap <b>Send to King Soopers</b> on the List tab to fill your cart.');
 }
 
 // Stores a King Soopers match on our product and uses its current price.
@@ -297,7 +368,7 @@ function cleanWeek(w) {
     on[k] = !!v;
   }
   if (!bf || !ln || !sn) return null;
-  return { plan: w.plan, bf, ln, sn, on };
+  return { plan: w.plan, bf, ln, sn, on, sentAt: Math.max(0, +w.sentAt || 0) };
 }
 
 function json(data, status = 200, headers = {}) {

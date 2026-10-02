@@ -335,3 +335,5 @@ button.ing-name { font-size: 13.5px; }
 .kp-meta { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
 .opt.kopt { grid-template-columns: 44px 1fr auto; }
 .opt.kopt img { width: 44px; height: 44px; object-fit: contain; border-radius: 10px; background: #fff; }
+
+a.cta { text-decoration: none; }

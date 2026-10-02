@@ -89,6 +89,59 @@ export async function productsById(env, ids, locationId) {
   return out;
 }
 
+// ---------- Customer cart (OAuth authorization code) ----------
+// One family King Soopers account is linked; its tokens live in the database, never on phones.
+export function authorizeUrl(env, redirectUri, state) {
+  const u = new URL(API + '/connect/oauth2/authorize');
+  u.searchParams.set('scope', 'cart.basic:write');
+  u.searchParams.set('response_type', 'code');
+  u.searchParams.set('client_id', env.KROGER_CLIENT_ID.trim());
+  u.searchParams.set('redirect_uri', redirectUri);
+  u.searchParams.set('state', state);
+  u.searchParams.set('banner', 'kingsoopers');
+  return u.toString();
+}
+
+async function tokenRequest(env, body) {
+  const res = await fetch(API + '/connect/oauth2/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: 'Basic ' + btoa(env.KROGER_CLIENT_ID.trim() + ':' + env.KROGER_CLIENT_SECRET.trim())
+    },
+    body: new URLSearchParams(body).toString()
+  });
+  if (!res.ok) {
+    console.error('kroger user token', res.status, (await res.text()).slice(0, 200));
+    return null;
+  }
+  const d = await res.json();
+  return { access: d.access_token, refresh: d.refresh_token, exp: Date.now() + d.expires_in * 1000 };
+}
+
+export function exchangeCode(env, code, redirectUri) {
+  return tokenRequest(env, { grant_type: 'authorization_code', code, redirect_uri: redirectUri });
+}
+
+export async function freshUserToken(env, saved) {
+  if (saved.exp > Date.now() + 60_000) return saved;
+  const next = await tokenRequest(env, { grant_type: 'refresh_token', refresh_token: saved.refresh });
+  return next ? { ...saved, ...next, refresh: next.refresh || saved.refresh } : null;
+}
+
+// items: [{ upc, quantity }]. Kroger adds to whatever is already in the cart.
+export async function addToCart(accessToken, items) {
+  const res = await fetch(API + '/cart/add', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: 'Bearer ' + accessToken },
+    body: JSON.stringify({ items: items.map(i => ({ upc: i.upc, quantity: i.quantity, modality: 'PICKUP' })) })
+  });
+  if (res.status === 204 || res.ok) return { ok: true };
+  const detail = (await res.text()).slice(0, 300);
+  console.error('kroger cart', res.status, detail);
+  return { ok: false, status: res.status, detail };
+}
+
 export function currentPrice(k) { return k.promo > 0 && k.promo < k.regular ? k.promo : k.regular; }
 
 // Picks the search result that best fits our product: shared words, matching brand, similar size.
