@@ -66,6 +66,7 @@ export function simplify(p) {
     promo: +price.promo || 0,
     image: size ? size.url : '',
     aisle: (p.aisleLocations || [])[0]?.description || '',
+    categories: p.categories || [],
     pickup: item.fulfillment ? !!item.fulfillment.curbside : null,
     stock: item.inventory?.stockLevel || ''
   };

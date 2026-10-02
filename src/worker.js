@@ -7,7 +7,8 @@ import {
 // Static files in /public are served straight from Cloudflare's edge; only /api/* reaches this code.
 const COOKIE = 'fp_session';
 const SESSION_DAYS = 400; // the longest browsers allow, so phones stay signed in
-const WEEK_RE = /^\/api\/week\/(\d{4}-\d{2}-\d{2})$/;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const KEY_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const PRODUCT_RE = /^\/api\/products\/([A-Za-z0-9_-]{1,40})$/;
 const MAX_BODY = 256 * 1024;
 
@@ -42,33 +43,99 @@ async function route(request, env, url) {
   if (method !== 'GET' && !sameOrigin(request, url)) return json({ error: 'Bad origin' }, 403);
 
   if (pathname === '/api/bootstrap' && method === 'GET') {
-    const id = url.searchParams.get('week') || '';
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(id)) return json({ error: 'Missing week' }, 400);
-    const [catalog, week] = await Promise.all([getCatalog(env), getDoc(env, 'week:' + id)]);
-    const previous = week ? null : await previousWeek(env, id);
-    const link = await getDoc(env, 'kroger:user');
+    const catalog = await getCatalog(env);
+    const [household, dinners, link] = await Promise.all([getHousehold(env), getDoc(env, 'dinners'), getDoc(env, 'kroger:user')]);
     const kroger = { connected: !!link, connectedBy: link ? link.connectedBy : null };
-    return json({ user, catalog, week, previous, kroger });
+    return json({ user, catalog, household, dinners: dinners || { days: {}, updatedAt: 0 }, kroger });
   }
 
-  let m = pathname.match(WEEK_RE);
-  if (m && method === 'PUT') {
+  // Breakfast/lunch/snack picks and list check-offs.
+  if (pathname === '/api/household' && method === 'PUT') {
+    const h = cleanHousehold(await readJson(request));
+    if (!h) return json({ error: 'Invalid household' }, 400);
+    h.updatedAt = Date.now();
+    h.updatedBy = user;
+    await putDoc(env, 'household', h);
+    return json({ updatedAt: h.updatedAt });
+  }
+
+  // Dinner per date. Merges, so two phones changing different days don't overwrite each other.
+  if (pathname === '/api/dinners' && method === 'PUT') {
     const body = await readJson(request);
-    if (!body) return json({ error: 'Invalid week' }, 400);
-    const week = cleanWeek(body);
-    if (!week) return json({ error: 'Invalid week' }, 400);
-    week.updatedAt = Date.now();
-    week.updatedBy = user;
-    await putDoc(env, 'week:' + m[1], week);
-    return json({ updatedAt: week.updatedAt });
+    const incoming = body && body.days && typeof body.days === 'object' ? Object.entries(body.days) : null;
+    if (!incoming || incoming.length > 60 || !incoming.every(([d, id]) => DATE_RE.test(d) && typeof id === 'string' && id.length <= 40)) {
+      return json({ error: 'Invalid dinners' }, 400);
+    }
+    const doc = (await getDoc(env, 'dinners')) || { days: {} };
+    for (const [d, id] of incoming) doc.days[d] = id;
+    const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
+    for (const d of Object.keys(doc.days)) if (d < cutoff) delete doc.days[d];
+    doc.updatedAt = Date.now();
+    doc.updatedBy = user;
+    await putDoc(env, 'dinners', doc);
+    return json({ updatedAt: doc.updatedAt, days: doc.days });
   }
 
+  // Adds a King Soopers product as a new breakfast, lunch or snack.
+  if (pathname === '/api/everyday' && method === 'POST') {
+    const body = await readJson(request);
+    const kind = body && body.kind;
+    if (!['breakfast', 'lunch', 'snack'].includes(kind)) return json({ error: 'Invalid item' }, 400);
+    const catalog = await getCatalog(env);
+    let key, label;
+    if (body.custom) {
+      // Something bought elsewhere (usually Costco): no King Soopers link, price typed in by the family.
+      const c = body.custom, price = Math.round((+c.price || 0) * 100) / 100;
+      const cname = String(c.name || '').trim().slice(0, 60);
+      if (!cname || !(price > 0 && price < 500)) return json({ error: 'Add a name and a price.' }, 400);
+      key = 'x' + Date.now().toString(36);
+      catalog.products[key] = { name: cname, size: String(c.size || '').trim().slice(0, 30), price, aisle: 'Costco', store: 'costco', dyeRisk: true, custom: true };
+      label = cname;
+    } else {
+      if (!/^\d{13}$/.test(String(body.productId))) return json({ error: 'Invalid item' }, 400);
+      const store = catalog.settings.krogerStore;
+      if (!store) return json({ error: 'Pick your King Soopers store first.' }, 409);
+      const [k] = await productsById(env, [body.productId], store.locationId);
+      if (!k) return json({ error: 'That product is not sold at your store.' }, 404);
+      key = 'k' + k.productId;
+      if (!catalog.products[key]) {
+        catalog.products[key] = { name: k.description, size: k.size, price: currentPrice(k), aisle: aisleFor(k), dyeRisk: true, custom: true };
+        applyKroger(catalog.products[key], k, true, user);
+      }
+      label = k.description;
+    }
+    if (!catalog.aisles.includes('Costco')) catalog.aisles.push('Costco');
+    const name = String(body.name || label).trim().slice(0, 60) || label;
+    const household = await getHousehold(env);
+    let entryId = key;
+    if (kind === 'snack') {
+      if (!catalog.snacks.includes(key)) catalog.snacks.push(key);
+      household.sn[key] = Math.max(1, household.sn[key] || 0);
+    } else {
+      const lasts = Math.max(1, Math.min(14, Math.round(+body.lasts || 3)));
+      const list = kind === 'breakfast' ? catalog.breakfasts : catalog.lunches;
+      entryId = 'c' + Date.now().toString(36);
+      list.push({ id: entryId, name, items: [[key, Math.round(1000 / lasts) / 1000]], custom: true });
+      (kind === 'breakfast' ? household.bf : household.ln)[entryId] = 0;
+    }
+    household.updatedAt = Date.now();
+    await Promise.all([putDoc(env, 'catalog', catalog), putDoc(env, 'household', household)]);
+    return json({ catalog, household, entryId });
+  }
+
+  let m;
   m = pathname.match(PRODUCT_RE);
   if (m && method === 'PATCH') {
     const body = await readJson(request);
     const catalog = await getCatalog(env);
     const p = catalog.products[m[1]];
     if (!p || !body) return json({ error: 'Unknown product' }, 404);
+    if ('price' in body) {
+      const price = Math.round((+body.price || 0) * 100) / 100;
+      if (p.kroger) return json({ error: 'King Soopers sets this price.' }, 400);
+      if (!(price > 0 && price < 500)) return json({ error: 'Enter a price.' }, 400);
+      p.price = price;
+    }
     if ('dyeChecked' in body) {
       if (body.dyeChecked === null) delete p.dyeChecked;
       else if (/^\d{4}-\d{2}-\d{2}$/.test(String(body.dyeChecked))) { p.dyeChecked = body.dyeChecked; p.dyeCheckedBy = user; }
@@ -339,9 +406,34 @@ async function getCatalog(env) {
   await putDoc(env, 'catalog', SEED_CATALOG);
   return structuredClone(SEED_CATALOG);
 }
-async function previousWeek(env, id) {
-  const row = await env.DB.prepare("SELECT body FROM docs WHERE id LIKE 'week:%' AND id < ? ORDER BY id DESC LIMIT 1").bind('week:' + id).first();
-  return row ? JSON.parse(row.body) : null;
+// Household picks. The first time this runs after the switch from weekly plans,
+// it carries the latest week's picks and every week's dinners over.
+async function getHousehold(env) {
+  const h = await getDoc(env, 'household');
+  if (h) return h;
+  const { results } = await env.DB.prepare("SELECT id, body FROM docs WHERE id LIKE 'week:%' ORDER BY id").all();
+  if (!results.length) return { bf: {}, ln: {}, sn: {}, on: {}, sentAt: 0, updatedAt: 0, fresh: true };
+  const days = {};
+  let latest = null;
+  for (const row of results) {
+    const week = JSON.parse(row.body), start = new Date(row.id.slice(5) + 'T12:00:00Z');
+    (week.plan || []).forEach((id, i) => { days[new Date(start.getTime() + i * 86400_000).toISOString().slice(0, 10)] = id; });
+    latest = week;
+  }
+  const migrated = { bf: latest.bf || {}, ln: latest.ln || {}, sn: latest.sn || {}, on: latest.on || {}, sentAt: latest.sentAt || 0, updatedAt: Date.now() };
+  await putDoc(env, 'household', migrated);
+  if (!(await getDoc(env, 'dinners'))) await putDoc(env, 'dinners', { days, updatedAt: Date.now() });
+  return migrated;
+}
+
+function aisleFor(k) {
+  const c = (k.categories || []).join(' ').toLowerCase();
+  if (/produce/.test(c)) return 'Produce';
+  if (/meat|seafood/.test(c)) return 'Meat';
+  if (/dairy|deli|cheese|egg/.test(c)) return 'Dairy & eggs';
+  if (/bakery|bread/.test(c)) return 'Bakery';
+  if (/frozen/.test(c)) return 'Frozen';
+  return 'Pantry';
 }
 
 async function readJson(request) {
@@ -350,25 +442,24 @@ async function readJson(request) {
   try { return JSON.parse(text); } catch { return null; }
 }
 
-function cleanWeek(w) {
+function cleanHousehold(h) {
+  if (!h || typeof h !== 'object') return null;
   const counts = o => {
     if (!o || typeof o !== 'object') return null;
     const out = {};
     for (const [k, v] of Object.entries(o)) {
-      if (!/^[A-Za-z0-9_-]{1,40}$/.test(k)) return null;
+      if (!KEY_RE.test(k)) return null;
       out[k] = Math.max(0, Math.min(14, Math.round(+v || 0)));
     }
     return out;
   };
-  if (!Array.isArray(w.plan) || w.plan.length !== 7 || !w.plan.every(s => typeof s === 'string' && s.length <= 40)) return null;
-  const bf = counts(w.bf), ln = counts(w.ln), sn = counts(w.sn);
-  const on = {};
-  for (const [k, v] of Object.entries(w.on || {})) {
-    if (!/^[A-Za-z0-9_-]{1,40}$/.test(k)) return null;
+  const bf = counts(h.bf), ln = counts(h.ln), sn = counts(h.sn), on = {};
+  if (!bf || !ln || !sn) return null;
+  for (const [k, v] of Object.entries(h.on || {})) {
+    if (!KEY_RE.test(k)) return null;
     on[k] = !!v;
   }
-  if (!bf || !ln || !sn) return null;
-  return { plan: w.plan, bf, ln, sn, on, sentAt: Math.max(0, +w.sentAt || 0) };
+  return { bf, ln, sn, on, sentAt: Math.max(0, +h.sentAt || 0) };
 }
 
 function json(data, status = 200, headers = {}) {

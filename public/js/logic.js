@@ -6,7 +6,7 @@ export const SPECIAL = {
   out: { name: 'Eating out', sub: 'Comes from the eating-out money' }
 };
 
-// ---------- Dates (weeks start on Sunday, local time) ----------
+// ---------- Dates (local time; the plan always covers today and the next 6 days) ----------
 export function isoDate(d) {
   const p = n => String(n).padStart(2, '0');
   return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
@@ -20,19 +20,18 @@ export function addDays(d, n) {
   x.setDate(x.getDate() + n);
   return x;
 }
-export function weekStart(d) { return addDays(d, -d.getDay()); }
-export function weekId(d) { return isoDate(weekStart(d)); }
+export function upcomingDates(today = new Date(), n = 7) {
+  return Array.from({ length: n }, (_, i) => isoDate(addDays(today, i)));
+}
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-export function weekDays(id) {
-  const start = parseIso(id);
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = addDays(start, i);
-    return { dow: DOW[i], date: d.getDate(), month: MONTHS[d.getMonth()] };
-  });
+export function dayInfo(iso, todayIso) {
+  const d = parseIso(iso);
+  const rel = iso === todayIso ? 'Today' : iso === isoDate(addDays(parseIso(todayIso), 1)) ? 'Tomorrow' : '';
+  return { dow: DOW[d.getDay()], date: d.getDate(), month: MONTHS[d.getMonth()], rel };
 }
-export function weekLabel(id) {
-  const s = parseIso(id), e = addDays(s, 6);
+export function rangeLabel(dates) {
+  const s = parseIso(dates[0]), e = parseIso(dates[dates.length - 1]);
   return s.getMonth() === e.getMonth()
     ? MONTHS[s.getMonth()] + ' ' + s.getDate() + ' – ' + e.getDate()
     : MONTHS[s.getMonth()] + ' ' + s.getDate() + ' – ' + MONTHS[e.getMonth()] + ' ' + e.getDate();
@@ -47,28 +46,27 @@ export function tier(cost) {
 }
 export function byId(list) { return Object.fromEntries(list.map(x => [x.id, x])); }
 
-// ---------- Weeks ----------
-export function normalizeWeek(catalog, week) {
+// ---------- Household picks (breakfast, lunch, snacks, list check-offs) ----------
+export function normalizeHousehold(catalog, h) {
   const d = catalog.defaults;
-  const w = week || {};
-  const ints = (src, fallback) => {
-    const o = {};
-    for (const [k, v] of Object.entries(src || fallback)) o[k] = Math.max(0, Math.min(14, Math.round(+v || 0)));
-    return o;
+  const src = h || {};
+  const ints = (o, fallback) => {
+    const out = {};
+    for (const [k, v] of Object.entries(o || fallback)) out[k] = Math.max(0, Math.min(14, Math.round(+v || 0)));
+    return out;
   };
   return {
-    plan: Array.isArray(w.plan) && w.plan.length === 7 ? w.plan.map(String) : d.plan.slice(),
-    bf: ints(w.bf, d.bf),
-    ln: ints(w.ln, d.ln),
-    sn: ints(w.sn, d.sn),
-    on: w.on && typeof w.on === 'object' ? Object.fromEntries(Object.entries(w.on).map(([k, v]) => [k, !!v])) : {},
-    sentAt: +w.sentAt || 0,
-    updatedAt: +w.updatedAt || 0
+    bf: ints(src.bf, d.bf),
+    ln: ints(src.ln, d.ln),
+    sn: ints(src.sn, d.sn),
+    on: src.on && typeof src.on === 'object' ? Object.fromEntries(Object.entries(src.on).map(([k, v]) => [k, !!v])) : {},
+    sentAt: +src.sentAt || 0,
+    updatedAt: +src.updatedAt || 0
   };
 }
 
-// Repeatable randomness: the same week id always suggests the same dinners, so two phones
-// opening a brand-new week see the same plan before anyone saves it.
+// Repeatable randomness: the same date always suggests the same dinner, so two phones
+// filling an empty day pick the same thing before anyone saves it.
 export function seededRandom(seed) {
   let h = 1779033703 ^ seed.length;
   for (let i = 0; i < seed.length; i++) { h = Math.imul(h ^ seed.charCodeAt(i), 3432918353); h = (h << 13) | (h >>> 19); }
@@ -80,11 +78,17 @@ export function seededRandom(seed) {
   };
 }
 
-// A new week starts with a suggested dinner plan and last week's everyday picks.
-export function newWeek(catalog, previous, rand = Math.random) {
-  const base = normalizeWeek(catalog, previous ? { bf: previous.bf, ln: previous.ln, sn: previous.sn } : null);
-  base.plan = suggestPlan(catalog, rand);
-  return base;
+// Fills days with no dinner picked yet, avoiding dinners already in the plan.
+export function fillDinners(catalog, days, dates) {
+  const plan = dates.map(d => days[d] || null);
+  const filled = [];
+  plan.forEach((id, i) => {
+    if (id) return;
+    const options = suggestPlan(catalog, seededRandom(dates[i]));
+    plan[i] = options.find(o => !plan.includes(o)) || options[0];
+    filled.push(dates[i]);
+  });
+  return { plan, filled };
 }
 
 // Ingredients in this dinner that another day's dinner also uses.
@@ -128,6 +132,7 @@ export function suggestPlan(catalog, rand = Math.random) {
 // ---------- Shopping list ----------
 // Sums what every planned meal uses, rounds up to whole packages, and splits each
 // package's cost across dinners / breakfast / lunch / snacks by how much each uses.
+// week: { plan: [7 dinner ids], bf, ln, sn, on } for the days being shopped for.
 export function buildList(catalog, week) {
   const P = catalog.products;
   const dinners = byId(catalog.dinners);

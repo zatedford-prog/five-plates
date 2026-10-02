@@ -1,18 +1,20 @@
 import {
-  SPECIAL, weekId, weekDays, weekLabel, parseIso, addDays, isoDate, itemsCost, tier, byId,
-  normalizeWeek, newWeek, seededRandom, sharedWith, suggestPlan, buildList, totals, listAsText
+  SPECIAL, upcomingDates, dayInfo, rangeLabel, isoDate, itemsCost, tier, byId,
+  normalizeHousehold, fillDinners, sharedWith, suggestPlan, buildList, totals, listAsText
 } from './logic.js';
 
 // ---------- App state ----------
-const CACHE_KEY = 'fp-cache-v1';
+// Dinners are stored per date; the app always shows today and the next 6 days.
+// Breakfast, lunch, snacks and list check-offs are household-wide picks.
+const CACHE_KEY = 'fp-cache-v2';
 const app = {
   user: null,
   catalog: null,
-  weeks: {},          // weekId -> week
-  dirty: new Set(),   // weekIds with changes not yet saved
-  current: weekId(new Date()),
+  household: null,                     // { bf, ln, sn, on, sentAt, updatedAt }
+  dinners: { days: {}, updatedAt: 0 }, // { days: { 'YYYY-MM-DD': mealId } }
+  dirty: { household: false, days: {} },
   tab: 'week',
-  sync: 'saved'       // saved | saving | offline
+  sync: 'saved'                        // saved | saving | offline
 };
 
 const $ = id => document.getElementById(id);
@@ -25,8 +27,9 @@ const local = {
 };
 
 function saveCache() {
-  local.set(CACHE_KEY, { user: app.user, kroger: app.kroger, catalog: app.catalog, weeks: app.weeks, dirty: [...app.dirty] });
+  local.set(CACHE_KEY, { user: app.user, kroger: app.kroger, catalog: app.catalog, household: app.household, dinners: app.dinners, dirty: app.dirty });
 }
+function isDirty() { return app.dirty.household || Object.keys(app.dirty.days).length > 0; }
 
 // ---------- Server ----------
 async function api(path, opts = {}) {
@@ -41,54 +44,67 @@ async function api(path, opts = {}) {
   return { status: res.status, data };
 }
 
-async function loadWeek(id, { quiet } = {}) {
+async function load({ quiet } = {}) {
   let res;
-  try { res = await api('/api/bootstrap?week=' + id); }
+  try { res = await api('/api/bootstrap'); }
   catch { setSync('offline'); return false; }
   if (res.status === 401) { signOutLocal(); return false; }
   if (res.status !== 200) { if (!quiet) toast('Couldn\'t load. Showing what\'s saved on this phone.'); return false; }
-  const { user, catalog, week, previous, kroger } = res.data;
-  app.kroger = kroger || { connected: false };
+  const { user, catalog, household, dinners, kroger } = res.data;
   app.user = user;
   app.catalog = catalog;
-  if (week) {
-    const localWeek = app.weeks[id];
-    if (!app.dirty.has(id) || !localWeek || week.updatedAt > localWeek.updatedAt) {
-      app.weeks[id] = normalizeWeek(catalog, week);
-      app.dirty.delete(id);
-    }
-  } else if (!app.weeks[id]) {
-    app.weeks[id] = newWeek(catalog, previous, seededRandom(id));
+  app.kroger = kroger || { connected: false };
+  // Server wins unless this phone has unsaved changes.
+  if (!app.dirty.household || !app.household || (household && household.updatedAt > app.household.updatedAt)) {
+    app.household = normalizeHousehold(catalog, household && !household.fresh ? household : null);
+    app.dirty.household = false;
   }
-  if (app.sync === 'offline') setSync(app.dirty.size ? 'saving' : 'saved');
+  const days = { ...dinners.days };
+  for (const d of Object.keys(app.dirty.days)) days[d] = app.dinners.days[d];
+  app.dinners = { days, updatedAt: dinners.updatedAt };
+  if (app.sync === 'offline') setSync(isDirty() ? 'saving' : 'saved');
   saveCache();
-  if (app.dirty.size) flushSoon();
+  if (isDirty()) flushSoon();
   return true;
 }
 
 let flushTimer = null, retryTimer = null;
-function markDirty() {
-  app.dirty.add(app.current);
-  app.weeks[app.current].updatedAt = Date.now();
-  saveCache();
-  setSync('saving');
-  flushSoon();
+function markHousehold() {
+  app.dirty.household = true;
+  app.household.updatedAt = Date.now();
+  saveCache(); setSync('saving'); flushSoon();
+}
+function setDinner(date, id) {
+  app.dinners.days[date] = id;
+  app.dirty.days[date] = true;
+  saveCache(); setSync('saving'); flushSoon();
 }
 function flushSoon() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 700); }
 async function flush() {
   clearTimeout(retryTimer);
-  for (const id of [...app.dirty]) {
-    const w = app.weeks[id];
-    let res;
-    try { res = await api('/api/week/' + id, { method: 'PUT', body: { plan: w.plan, bf: w.bf, ln: w.ln, sn: w.sn, on: w.on, sentAt: w.sentAt || 0 } }); }
-    catch { setSync('offline'); retryTimer = setTimeout(flush, 15000); return; }
-    if (res.status === 401) { signOutLocal(); return; }
-    if (res.status !== 200) { setSync('offline'); retryTimer = setTimeout(flush, 15000); return; }
-    w.updatedAt = res.data.updatedAt;
-    app.dirty.delete(id);
-  }
+  const fail = () => { setSync('offline'); retryTimer = setTimeout(flush, 15000); };
+  try {
+    const dates = Object.keys(app.dirty.days);
+    if (dates.length) {
+      const body = { days: Object.fromEntries(dates.map(d => [d, app.dinners.days[d]])) };
+      const res = await api('/api/dinners', { method: 'PUT', body });
+      if (res.status === 401) { signOutLocal(); return; }
+      if (res.status !== 200) return fail();
+      dates.forEach(d => delete app.dirty.days[d]);
+      app.dinners = { days: { ...res.data.days, ...Object.fromEntries(Object.keys(app.dirty.days).map(d => [d, app.dinners.days[d]])) }, updatedAt: res.data.updatedAt };
+    }
+    if (app.dirty.household) {
+      const h = app.household;
+      const res = await api('/api/household', { method: 'PUT', body: { bf: h.bf, ln: h.ln, sn: h.sn, on: h.on, sentAt: h.sentAt || 0 } });
+      if (res.status === 401) { signOutLocal(); return; }
+      if (res.status !== 200) return fail();
+      h.updatedAt = res.data.updatedAt;
+      app.dirty.household = false;
+    }
+  } catch { return fail(); }
   saveCache();
-  setSync('saved');
+  setSync(isDirty() ? 'saving' : 'saved');
+  if (isDirty()) flushSoon();
 }
 
 function setSync(s) {
@@ -102,33 +118,30 @@ function setSync(s) {
 // ---------- Boot ----------
 async function boot() {
   const cached = local.get(CACHE_KEY);
-  if (cached && cached.user && cached.catalog) {
-    app.user = cached.user;
-    app.catalog = cached.catalog;
-    app.kroger = cached.kroger || { connected: false };
-    app.weeks = cached.weeks || {};
-    app.dirty = new Set(cached.dirty || []);
-    if (!app.weeks[app.current]) app.weeks[app.current] = newWeek(app.catalog, null, seededRandom(app.current));
+  if (cached && cached.user && cached.catalog && cached.household) {
+    Object.assign(app, { user: cached.user, catalog: cached.catalog, kroger: cached.kroger || { connected: false }, household: cached.household, dinners: cached.dinners || { days: {} }, dirty: cached.dirty || { household: false, days: {} } });
     renderShell();
     renderAll();
-    if (await loadWeek(app.current, { quiet: true }) && app.user) renderAll();
+    if (await load({ quiet: true }) && app.user) renderAll();
   } else {
     let res;
-    try { res = await api('/api/bootstrap?week=' + app.current); }
+    try { res = await api('/api/bootstrap'); }
     catch { $('boot').textContent = 'Can\'t reach Five Plates. Check your connection and reopen the app.'; return; }
     if (res.status === 401) { renderSignIn(); return; }
-    await loadWeek(app.current);
+    await load();
     renderShell();
     renderAll();
   }
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
+// Reopening the app (or the date changing) moves the 7 days forward and picks up the other phone's changes.
 document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState !== 'visible' || !app.user) return;
-  if (await loadWeek(app.current, { quiet: true }) && app.user) renderAll();
+  renderAll();
+  if (await load({ quiet: true }) && app.user) renderAll();
 });
-window.addEventListener('online', () => { if (app.dirty.size) flush(); });
+window.addEventListener('online', () => { if (isDirty()) flush(); });
 
 // ---------- Sign-in ----------
 function renderSignIn(message, email = '') {
@@ -149,7 +162,7 @@ function renderSignIn(message, email = '') {
     catch { renderSignIn('Can\'t reach Five Plates. Check your connection and try again.'); return; }
     if (res.status !== 200) { renderSignIn(res.data?.error || 'Sign-in didn\'t work. Try again.', $('email').value); return; }
     app.user = res.data.user;
-    await loadWeek(app.current);
+    await load();
     renderShell();
     renderAll();
   };
@@ -197,12 +210,7 @@ function renderShell() {
       <span class="sync" id="sync" role="status"></span>
     </div>
     <div>
-      <div class="weeknav">
-        <button type="button" id="prevWeek" aria-label="Previous week">${ICON.left}</button>
-        <div class="eyebrow" id="eyebrow"></div>
-        <button type="button" id="nextWeek" aria-label="Next week">${ICON.right}</button>
-        <span class="this-week" id="thisWeek" hidden>This week</span>
-      </div>
+      <div class="eyebrow" id="eyebrow"></div>
       <div class="brandrow">
         <h1 id="title"></h1>
         <button class="pill-btn" id="suggestBtn" type="button">
@@ -246,20 +254,8 @@ function renderShell() {
   $('sheetClose').onclick = closeSheet;
   $('suggestBtn').onclick = suggest;
   $('sendBtn').onclick = sendSheet;
-  $('prevWeek').onclick = () => goWeek(-7);
-  $('nextWeek').onclick = () => goWeek(7);
-  setSync(app.dirty.size ? 'saving' : app.sync);
+  setSync(isDirty() ? 'saving' : app.sync);
   setTab(app.tab);
-}
-
-async function goWeek(days) {
-  app.current = isoDate(addDays(parseIso(app.current), days));
-  if (!app.weeks[app.current]) {
-    const prev = app.weeks[isoDate(addDays(parseIso(app.current), -7))];
-    app.weeks[app.current] = newWeek(app.catalog, prev, seededRandom(app.current));
-  }
-  renderAll();
-  if (await loadWeek(app.current, { quiet: true }) && app.user) renderAll();
 }
 
 function setTab(t) {
@@ -274,12 +270,22 @@ function setTab(t) {
   $('screen-' + t).scrollTop = 0;
 }
 
-function week() { return app.weeks[app.current]; }
+// The next 7 days, with any empty day filled by a suggestion (and saved so both phones agree).
+function upcoming() {
+  const dates = upcomingDates(new Date());
+  const { plan, filled } = fillDinners(app.catalog, app.dinners.days, dates);
+  if (filled.length) filled.forEach((d, i) => { app.dinners.days[d] = plan[dates.indexOf(d)]; app.dirty.days[d] = true; }), flushSoon();
+  return { dates, plan, today: dates[0] };
+}
+// What the list and totals work from: the next 7 dinners plus the household picks.
+function week() {
+  const h = app.household, { plan } = upcoming();
+  return { plan, bf: h.bf, ln: h.ln, sn: h.sn, on: h.on, sentAt: h.sentAt };
+}
+function dayLabel(i) { const u = upcoming(); return dayInfo(u.dates[i], u.today); }
 function renderAll() {
   if (!$('meter')) return;
-  const isThis = app.current === weekId(new Date());
-  $('eyebrow').textContent = 'Week of ' + weekLabel(app.current);
-  $('thisWeek').hidden = !isThis;
+  $('eyebrow').textContent = 'Next 7 days · ' + rangeLabel(upcoming().dates);
   renderMeter(); renderWeek(); renderEvery(); renderList(); renderMeals();
 }
 
@@ -306,8 +312,9 @@ function dismissible(key, title, text) {
 }
 
 function renderWeek() {
-  const c = app.catalog, w = week(), dinners = byId(c.dinners), days = weekDays(app.current);
-  let h = dismissible('hello-week', 'Your week, planned', 'Tap a dinner to see what it costs, or swap it. Changes save on their own and show up on both of your phones.');
+  const c = app.catalog, w = week(), dinners = byId(c.dinners), u = upcoming();
+  const days = u.dates.map(d => dayInfo(d, u.today));
+  let h = dismissible('hello-week', 'Your next 7 dinners', 'Tap a dinner to see what it costs, or swap it. Each morning the list moves forward a day. Changes show up on both of your phones.');
   w.plan.forEach((id, i) => {
     const d = days[i];
     let name, meta;
@@ -323,7 +330,7 @@ function renderWeek() {
       name = s.name; meta = '<span>' + esc(s.sub) + '</span>';
     }
     h += '<div class="day' + (dinners[id] ? '' : ' off') + '">' +
-      '<div class="date"><small>' + d.dow + '</small><b>' + d.date + '</b></div>' +
+      '<div class="date"><small>' + (d.rel || d.dow) + '</small><b>' + d.date + '</b></div>' +
       '<button class="meal-btn" type="button" data-open="' + i + '"><span class="meal-name">' + esc(name) + '</span><span class="meal-meta">' + meta + '</span></button>' +
       '<button class="swap" type="button" data-swap="' + i + '" aria-label="Swap ' + d.dow + ' dinner">' + ICON.swap + 'Swap</button></div>';
   });
@@ -337,7 +344,7 @@ function stepper(group, id, n, canAdd, label) {
     '<span class="num">' + n + '</span>' +
     '<button type="button" data-step="' + group + '" data-id="' + id + '" data-d="1" aria-label="More ' + esc(label) + '"' + (canAdd ? '' : ' disabled') + '>' + ICON.plus + '</button></span>';
 }
-function daySection(title, unit, list, picks, group, bucketCost, tip) {
+function daySection(title, unit, list, picks, group, bucketCost, tip, kind) {
   const P = app.catalog.products;
   const used = list.reduce((s, x) => s + (picks[x.id] || 0), 0);
   let h = '<section class="sec"><div class="sec-head"><div><h2>' + title + '</h2><small>' + used + ' of 7 ' + unit + ' planned</small>' +
@@ -354,6 +361,7 @@ function daySection(title, unit, list, picks, group, bucketCost, tip) {
     h += '<div class="erow' + (n ? '' : ' zero') + '"><div style="min-width:0"><div class="erow-name">' + esc(x.name) + '</div><div class="erow-sub"><span>' + sub + '</span>' + badge + '</div></div>' +
       stepper(group, x.id, n, used < 7, x.name) + '</div>';
   });
+  h += '<button class="addrow" type="button" data-add="' + kind + '">' + ICON.plus + 'Add a ' + kind + '</button>';
   if (tip) h += '<p class="sec-tip">' + esc(tip) + '</p>';
   return h + '</section>';
 }
@@ -366,17 +374,18 @@ function renderEvery() {
     tip = 'Krusteaz pancakes cost about ' + money(itemsCost(BF.pancakes.items, P)) + ' a morning vs ' + money(itemsCost(BF.frozen.items, P)) +
       ' for frozen. Make a double batch on the weekend and freeze the extras for the toaster. ' + tip;
   }
-  h += daySection('Breakfast', 'mornings', c.breakfasts, w.bf, 'bf', t.breakfast, tip);
-  h += daySection('Lunch', 'lunches', c.lunches, w.ln, 'ln', t.lunch, null);
+  h += daySection('Breakfast', 'mornings', c.breakfasts, w.bf, 'bf', t.breakfast, tip, 'breakfast');
+  h += daySection('Lunch', 'lunches', c.lunches, w.ln, 'ln', t.lunch, null, 'lunch');
   const packs = c.snacks.reduce((s, k) => s + (w.sn[k] || 0), 0);
   h += '<section class="sec"><div class="sec-head"><div><h2>Snack shelf</h2><small>' + packs + ' packs for the week</small></div><div class="sec-cost num">' + whole(t.snack) + '<small>this week</small></div></div>';
   c.snacks.forEach(k => {
     const p = P[k], n = w.sn[k] || 0;
     if (!p) return;
-    h += '<div class="erow' + (n ? '' : ' zero') + '"><div style="min-width:0"><div class="erow-name">' + esc(p.name) + '</div><div class="erow-sub"><span>' + money(p.price) + (p.size ? ' · ' + esc(p.size) : '') + '</span>' + dyeBadge(k, p) + '</div></div>' +
+    h += '<div class="erow' + (n ? '' : ' zero') + '"><div style="min-width:0"><button type="button" class="erow-name ing-name" data-product="' + k + '">' + esc(p.name) + '</button><div class="erow-sub"><span>' + money(p.price) + (p.size ? ' · ' + esc(p.size) : '') + '</span>' + (p.store === 'costco' ? '<span class="chip costco">Costco</span>' : '') + dyeBadge(k, p) + '</div></div>' +
       stepper('sn', k, n, n < 6, p.name) + '</div>';
   });
-  h += '<p class="sec-tip">Fill a snack bin on Sunday. When it\'s empty, it\'s fruit until next week. Snacks grabbed in the aisle are an easy way to go over, and they\'re where dyes hide most.</p></section>';
+  h += '<button class="addrow" type="button" data-add="snack">' + ICON.plus + 'Add a snack</button>';
+  h += '<p class="sec-tip">Costco boxes last a few weeks, so tap + only in the week you restock. Fill a snack bin on Sunday. When it\'s empty, it\'s fruit until next week. Snacks grabbed in the aisle are an easy way to go over, and they\'re where dyes hide most.</p></section>';
   $('screen-every').innerHTML = h;
 }
 
@@ -405,7 +414,7 @@ function renderList() {
     const rs = rows.filter(r => !r.pantry && r.product.aisle === a).sort((x, y) => x.product.name.localeCompare(y.product.name));
     if (!rs.length) return;
     const sub = rs.filter(r => r.on).reduce((s, r) => s + r.cost, 0);
-    h += '<div class="group"><div class="group-head"><h3>' + esc(a) + '</h3><span class="num">' + money(sub) + '</span></div><div class="items">' + rs.map(itemRow).join('') + '</div></div>';
+    h += '<div class="group"><div class="group-head"><h3>' + esc(a === 'Costco' ? 'Costco run' : a) + '</h3><span class="num">' + money(sub) + '</span></div><div class="items">' + rs.map(itemRow).join('') + '</div></div>';
   });
   const pan = rows.filter(r => r.pantry);
   if (pan.length) h += '<div class="group"><div class="group-head"><h3>Probably in the pantry</h3><span>Tap if you need it</span></div><div class="items">' + pan.map(itemRow).join('') + '</div></div>';
@@ -462,7 +471,7 @@ function mealSheet(id, dayIdx) {
   if (!m) { swapSheet(dayIdx); return; }
   const cost = itemsCost(m.items, P), portions = c.settings.adultPortions;
   const bought = m.items.filter(([k]) => !P[k].pantry).reduce((t, [k, q]) => t + Math.ceil(q - .02) * P[k].price, 0);
-  const days = weekDays(app.current);
+  const days = upcoming().dates.map(d => dayInfo(d, upcoming().today));
   const head = '<div class="eyebrow">' + (dayIdx != null ? days[dayIdx].dow + ' ' + days[dayIdx].month + ' ' + days[dayIdx].date : 'Meal card') + '</div><h2 id="sheetTitle">' + esc(m.name) + '</h2>';
   let b = '<div class="stats">' +
     '<div class="stat"><b class="num">' + money(cost) + '</b><small>True cost of this dinner</small></div>' +
@@ -488,7 +497,7 @@ function mealSheet(id, dayIdx) {
 }
 
 function swapSheet(dayIdx) {
-  const c = app.catalog, w = week(), cur = w.plan[dayIdx], d = weekDays(app.current)[dayIdx];
+  const c = app.catalog, w = week(), cur = w.plan[dayIdx], d = dayLabel(dayIdx);
   const head = '<div class="eyebrow">' + d.dow + ' ' + d.month + ' ' + d.date + '</div><h2 id="sheetTitle">Pick a dinner</h2>';
   const list = c.dinners.slice().sort((a, b) => itemsCost(a.items, c.products) - itemsCost(b.items, c.products));
   let b = '<div class="opts">';
@@ -554,7 +563,16 @@ function productSheet(key) {
   const p = app.catalog.products[key];
   if (!p) return;
   const k = p.kroger;
-  const head = '<div class="eyebrow">' + esc(p.name) + '</div><h2 id="sheetTitle">' + esc(displayName(p)) + '</h2>';
+  const head = '<div class="eyebrow">' + esc(p.store === 'costco' ? 'Costco' : p.name) + '</div><h2 id="sheetTitle">' + esc(displayName(p)) + '</h2>';
+  if (p.store === 'costco') {
+    openSheet(head,
+      '<div class="kp-meta">' + esc(p.size || '') + dyeBadge(key, p) + '</div>' +
+      '<div class="field"><label for="editPrice">Price at Costco</label><input id="editPrice" type="number" inputmode="decimal" step="0.01" min="0" value="' + p.price.toFixed(2) + '"></div>' +
+      '<button class="cta" type="button" id="savePrice">Save price</button>' +
+      '<p class="why">Costco has no price feed, so update this when the price on the shelf changes.</p>');
+    $('savePrice').onclick = () => savePrice(key);
+    return;
+  }
   let b = '';
   if (k) {
     b += '<div class="kp">' + (k.image ? '<img src="' + esc(k.image) + '" alt="" width="88" height="88" loading="lazy">' : '') +
@@ -609,6 +627,88 @@ async function chooseProduct(key, productId) {
   toast('Saved: ' + displayName(res.data.product));
 }
 
+// ---------- Add a breakfast, lunch or snack ----------
+const LASTS = [1, 2, 3, 4, 5, 7];
+function addSheet(kind, source = 'ks') {
+  const unit = kind === 'breakfast' ? 'mornings' : kind === 'lunch' ? 'lunches' : '';
+  const head = '<div class="eyebrow">' + (kind === 'snack' ? 'Snack shelf' : kind === 'breakfast' ? 'Breakfast' : 'Lunch') + '</div><h2 id="sheetTitle">Add a ' + kind + '</h2>';
+  let b = '<div class="seg" role="tablist">' +
+    '<button type="button" role="tab" data-addsrc="ks" data-kind="' + kind + '" aria-selected="' + (source === 'ks') + '">King Soopers</button>' +
+    '<button type="button" role="tab" data-addsrc="costco" data-kind="' + kind + '" aria-selected="' + (source === 'costco') + '">Costco or other</button></div>';
+  if (kind !== 'snack') {
+    b += '<div class="field"><label for="addName">Name it</label><input id="addName" type="text" placeholder="' + (kind === 'breakfast' ? 'Turkey bacon & eggs' : 'Goodles mac & cheese') + '" autocomplete="off"></div>' +
+      '<div class="field"><label>One package lasts about</label><div class="chips" id="lastsChips">' +
+      LASTS.map(n => '<button type="button" class="pick' + (n === 3 ? ' on' : '') + '" data-lasts="' + n + '">' + n + ' ' + (n === 1 ? unit.replace(/s$/, '').replace('lunche', 'lunch') : unit) + '</button>').join('') + '</div></div>';
+  }
+  if (source === 'ks') {
+    b += '<div class="field"><label for="addSearch">Find it at King Soopers</label><input id="addSearch" type="search" placeholder="Search King Soopers" autocomplete="off"></div><div class="opts" id="addResults"></div>';
+  } else {
+    b += '<div class="field"><label for="cName">What is it?</label><input id="cName" type="text" placeholder="Annie\'s fruit snacks" autocomplete="off"></div>' +
+      '<div class="opts-row"><div class="field"><label for="cPrice">Price</label><input id="cPrice" type="number" inputmode="decimal" step="0.01" min="0" placeholder="13.99"></div>' +
+      '<div class="field"><label for="cSize">Size</label><input id="cSize" type="text" placeholder="42 ct" autocomplete="off"></div></div>' +
+      '<button class="cta" type="button" id="cAdd">' + ICON.plus + 'Add it</button>' +
+      '<p class="why">Costco items stay on your list for the Costco run and aren\'t sent to King Soopers.</p>';
+  }
+  openSheet(head, b);
+  const lasts = () => { const on = document.querySelector('#lastsChips .pick.on'); return on ? +on.dataset.lasts : 3; };
+  const nameVal = () => ($('addName') && $('addName').value.trim()) || '';
+  if (source === 'ks') {
+    const input = $('addSearch');
+    let timer;
+    input.oninput = () => { clearTimeout(timer); timer = setTimeout(() => addSearch(kind, input.value), 400); };
+    input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); addSearch(kind, input.value); } };
+    $('addResults').onclick = e => {
+      const btn = e.target.closest('[data-addpick]');
+      if (btn) addEveryday(kind, { productId: btn.dataset.addpick, lasts: lasts(), name: nameVal() });
+    };
+  } else {
+    $('cAdd').onclick = () => addEveryday(kind, { custom: { name: $('cName').value, price: $('cPrice').value, size: $('cSize').value }, lasts: lasts(), name: nameVal() || $('cName').value });
+  }
+}
+
+async function addSearch(kind, q) {
+  const box = $('addResults');
+  if (!box) return;
+  if (q.trim().length < 3) { box.innerHTML = ''; return; }
+  box.innerHTML = '<p class="hint">Searching…</p>';
+  let res;
+  try { res = await api('/api/kroger/search?q=' + encodeURIComponent(q.trim())); }
+  catch { box.innerHTML = '<p class="hint">You\'re offline. Try again when you have signal.</p>'; return; }
+  if (res.status !== 200) { box.innerHTML = '<p class="hint">' + esc(res.data?.error || 'Search didn\'t work. Try again.') + '</p>'; return; }
+  box.innerHTML = res.data.results.length ? res.data.results.map(r =>
+    '<button class="opt kopt" type="button" data-addpick="' + r.productId + '">' +
+    (r.image ? '<img src="' + esc(r.image) + '" alt="" width="44" height="44" loading="lazy">' : '<span></span>') +
+    '<span style="min-width:0"><span class="meal-name">' + esc(r.description) + '</span><span class="meal-meta">' + esc(r.size) + '</span></span>' +
+    '<span class="opt-cost num">' + money(r.promo > 0 && r.promo < r.regular ? r.promo : r.regular) + '</span></button>').join('')
+    : '<p class="hint">Nothing found. Try fewer or different words.</p>';
+}
+
+async function addEveryday(kind, body) {
+  let res;
+  try { res = await api('/api/everyday', { method: 'POST', body: { kind, ...body } }); }
+  catch { toast('You\'re offline. Try again when you have signal.'); return; }
+  if (res.status === 401) { signOutLocal(); return; }
+  if (res.status !== 200) { toast(res.data?.error || 'That didn\'t save. Try again.'); return; }
+  app.catalog = res.data.catalog;
+  if (!app.dirty.household) app.household = normalizeHousehold(app.catalog, res.data.household);
+  else if (kind === 'snack') app.household.sn[res.data.entryId] = Math.max(1, app.household.sn[res.data.entryId] || 0);
+  saveCache();
+  renderAll();
+  closeSheet();
+  toast(kind === 'snack' ? 'Added to the snack shelf' : 'Added. Tap + to plan it.');
+}
+
+async function savePrice(key) {
+  const price = $('editPrice').value;
+  let res;
+  try { res = await api('/api/products/' + key, { method: 'PATCH', body: { price } }); }
+  catch { toast('You\'re offline. Try again when you have signal.'); return; }
+  if (res.status !== 200) { toast(res.data?.error || 'That didn\'t save. Try again.'); return; }
+  app.catalog.products[key] = res.data.product;
+  saveCache(); renderAll(); closeSheet();
+  toast('Price saved');
+}
+
 // ---------- Send to King Soopers ----------
 function sendSheet() {
   const c = app.catalog, rows = buildList(c, week()).filter(r => r.on);
@@ -622,12 +722,14 @@ function sendSheet() {
     return;
   }
   const linked = rows.filter(r => r.product.kroger && !r.product.kroger.unavailable);
-  const missing = rows.filter(r => !r.product.kroger || r.product.kroger.unavailable);
-  const sentAt = week().sentAt;
+  const costco = rows.filter(r => r.product.store === 'costco');
+  const missing = rows.filter(r => r.product.store !== 'costco' && (!r.product.kroger || r.product.kroger.unavailable));
+  const sentAt = app.household.sentAt && Date.now() - app.household.sentAt < 6 * 86400_000 ? app.household.sentAt : 0;
   const total = linked.reduce((s, r) => s + r.cost, 0);
   let b = '<div class="store"><span class="store-logo">KS</span><p><b>' + esc((c.settings.krogerStore && c.settings.krogerStore.name) || 'Your King Soopers') + '</b>Items go into your cart. You pick the pickup time and check out in the King Soopers app.</p></div>';
-  if (sentAt) b += '<div class="tip dye">' + ICON.eye + '<span>You already sent this week’s list on ' + esc(new Date(sentAt).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })) + '. Sending again adds everything a second time, so clear the cart first if you’re starting over.</span></div>';
+  if (sentAt) b += '<div class="tip dye">' + ICON.eye + '<span>You already sent a list on ' + esc(new Date(sentAt).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })) + '. Sending again adds everything a second time, so clear the cart first if you’re starting over.</span></div>';
   if (missing.length) b += '<p class="why">' + missing.length + ' item' + (missing.length > 1 ? 's aren’t' : ' isn’t') + ' linked to a King Soopers product and will be skipped: ' + esc(missing.map(r => r.product.name).join(', ')) + '.</p>';
+  if (costco.length) b += '<p class="why">' + costco.length + ' Costco item' + (costco.length > 1 ? 's stay' : ' stays') + ' on your list for the Costco run.</p>';
   b += '<div class="send-list">' + linked.map(r => '<div class="send-row done"><span>' + esc(displayName(r.product)) + '</span><span class="num">' + (r.qty > 1 ? '×' + r.qty : '') + '</span></div>').join('') + '</div>' +
     '<button class="cta" type="button" id="doSend">' + ICON.cart + 'Add ' + linked.length + ' items · about ' + money(total) + '</button>' +
     '<button class="textlink" type="button" id="copyInstead">Copy the list instead</button>';
@@ -642,8 +744,8 @@ function sendSheet() {
     if (res.status === 401) { signOutLocal(); return; }
     if (res.status === 409) { app.kroger = { connected: false }; saveCache(); sendSheet(); return; }
     if (res.status !== 200) { btn.disabled = false; btn.textContent = 'Try again'; toast(res.data?.error || 'That didn’t go through. Try again.'); return; }
-    week().sentAt = Date.now();
-    markDirty();
+    app.household.sentAt = Date.now();
+    markHousehold();
     sentSheet(res.data);
   };
 }
@@ -660,7 +762,7 @@ function sentSheet(r) {
 
 function copySheet() {
   const c = app.catalog, rows = buildList(c, week()), t = totals(rows);
-  const text = listAsText(c, rows, 'Week of ' + weekLabel(app.current));
+  const text = listAsText(c, rows, 'Dinners ' + rangeLabel(upcoming().dates));
   const head = '<div class="eyebrow">Pickup order</div><h2 id="sheetTitle">Your list, ready to copy</h2>';
   const b = '<div class="store"><span class="store-logo">KS</span><p><b>Sending to your cart is coming soon</b>Once King Soopers is connected, this button fills your cart. For now, copy the list and paste it into Notes or a text.</p></div>' +
     '<textarea id="listText" readonly rows="10" style="width:100%;font:inherit;font-size:13px;border:1px solid var(--line);border-radius:14px;padding:10px 12px;background:var(--surface-2);color:var(--ink)">' + esc(text) + '</textarea>' +
@@ -673,8 +775,8 @@ function copySheet() {
 }
 
 function suggest() {
-  week().plan = suggestPlan(app.catalog);
-  markDirty();
+  const u = upcoming(), plan = suggestPlan(app.catalog);
+  u.dates.forEach((d, i) => setDinner(d, plan[i]));
   renderAll();
   toast('New week suggested');
 }
@@ -690,10 +792,13 @@ function toast(msg) {
 
 // ---------- Events ----------
 document.addEventListener('click', e => {
-  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide],[data-product],[data-choose],[data-confirm]');
+  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide],[data-product],[data-choose],[data-confirm],[data-add],[data-addsrc],[data-lasts]');
   if (!el || !app.catalog) return;
   const ds = el.dataset, w = week();
   if (ds.tab) setTab(ds.tab);
+  else if (ds.add) addSheet(ds.add);
+  else if (ds.addsrc) addSheet(ds.kind, ds.addsrc);
+  else if (ds.lasts) { document.querySelectorAll('#lastsChips .pick').forEach(b => b.classList.toggle('on', b === el)); }
   else if (ds.product) { e.stopPropagation(); productSheet(ds.product); }
   else if (ds.choose) chooseProduct(ds.key, ds.choose);
   else if (ds.confirm) chooseProduct(ds.confirm, app.catalog.products[ds.confirm].kroger.productId);
@@ -704,7 +809,7 @@ document.addEventListener('click', e => {
     const g = w[ds.step];
     g[ds.id] = Math.max(0, (g[ds.id] || 0) + (+ds.d));
     const sc = $('screen-every').scrollTop;
-    markDirty();
+    markHousehold();
     renderMeter(); renderEvery(); renderList();
     $('screen-every').scrollTop = sc;
     const again = document.querySelector('[data-step="' + ds.step + '"][data-id="' + ds.id + '"][data-d="' + ds.d + '"]');
@@ -714,18 +819,17 @@ document.addEventListener('click', e => {
   else if (ds.swap != null) swapSheet(+ds.swap);
   else if (ds.pick) {
     const d = +ds.day;
-    w.plan[d] = ds.pick;
-    markDirty();
+    setDinner(upcoming().dates[d], ds.pick);
     renderAll();
     closeSheet();
     const m = byId(app.catalog.dinners)[ds.pick];
-    toast(weekDays(app.current)[d].dow + ': ' + (m ? m.name : SPECIAL[ds.pick].name));
+    toast(dayLabel(d).dow + ': ' + (m ? m.name : SPECIAL[ds.pick].name));
   }
   else if (ds.item) {
     const row = buildList(app.catalog, w).find(r => r.key === ds.item);
     w.on[ds.item] = !(row && row.on);
     const sc = $('screen-list').scrollTop;
-    markDirty();
+    markHousehold();
     renderMeter(); renderList();
     $('screen-list').scrollTop = sc;
   }

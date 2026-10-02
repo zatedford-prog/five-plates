@@ -337,3 +337,18 @@ button.ing-name { font-size: 13.5px; }
 .opt.kopt img { width: 44px; height: 44px; object-fit: contain; border-radius: 10px; background: #fff; }
 
 a.cta { text-decoration: none; }
+
+/* Adding breakfasts, lunches and snacks */
+.addrow {
+  display: flex; align-items: center; gap: 8px; width: 100%; border: 0; border-top: 1px solid var(--line);
+  background: transparent; padding: 12px 14px; color: var(--accent); font-weight: 800; font-size: 14px; text-align: left;
+}
+.addrow svg { width: 16px; height: 16px; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; background: var(--surface-2); border-radius: 12px; padding: 4px; gap: 4px; }
+.seg button { border: 0; background: transparent; border-radius: 9px; padding: 9px 6px; font-weight: 800; font-size: 13.5px; color: var(--muted); }
+.seg button[aria-selected="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px var(--shadow); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.pick { border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 7px 12px; font-weight: 700; font-size: 13px; }
+.pick.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chip.costco { background: var(--sky); color: #08223A; }
+button.erow-name { display: block; font-weight: 700; font-size: 14.5px; }
