@@ -325,18 +325,23 @@ function weeksLeftInMonth(now = new Date()) {
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   return (daysInMonth - now.getDate() + 1) / 7;
 }
+// The headline at the top of every screen: what's really left in YNAB, and whether this plan fits.
 function ynabLine(planTotal) {
   const y = app.ynab || local.get('fp-ynab');
   if (!y || !y.grocery) return '';
   const g = y.grocery, weeks = weeksLeftInMonth(), pace = Math.max(0, g.balance) / weeks;
   const month = new Date().toLocaleDateString(undefined, { month: 'long' });
   const state = g.balance <= 0 ? 'over' : planTotal > pace * 1.05 ? 'tight' : 'ok';
-  const msg = state === 'over' ? 'Groceries is spent for ' + month + '.'
-    : state === 'tight' ? 'This plan is about ' + whole(planTotal - pace) + ' more than your weekly pace.'
-    : 'This plan fits your pace.';
-  return '<button type="button" class="ynab ' + state + '" data-ynab="1"><span class="ynab-tag">YNAB</span>' +
-    '<span><b class="num">' + whole(g.balance) + '</b> left in Groceries for ' + month + ' · about <b class="num">' + whole(pace) + '</b> a week. ' + esc(msg) +
-    (y.eatingOut ? ' Dining out: <b class="num">' + whole(y.eatingOut.balance) + '</b> left.' : '') + '</span></button>';
+  const verdict = state === 'over' ? 'Groceries is spent for ' + month
+    : state === 'tight' ? 'Plan is ' + whole(planTotal - pace) + ' over your weekly pace'
+    : 'Plan fits · ' + whole(pace - planTotal) + ' to spare';
+  return '<button type="button" class="ynab ' + state + '" data-ynab="1">' +
+    '<span class="ynab-top"><span class="ynab-tag">YNAB</span><span class="ynab-label">Left in Groceries for ' + month + '</span></span>' +
+    '<span class="ynab-big num">' + whole(g.balance) + '</span>' +
+    '<span class="ynab-row"><span>About <b class="num">' + whole(pace) + '</b> a week · this plan <b class="num">' + whole(planTotal) + '</b></span>' +
+    '<span class="ynab-verdict">' + esc(verdict) + '</span></span>' +
+    (y.eatingOut ? '<span class="ynab-out">Dining out: <b class="num">' + whole(y.eatingOut.balance) + '</b> left</span>' : '') +
+    '</button>';
 }
 
 // ---------- Header meter ----------
@@ -351,7 +356,7 @@ function renderMeter() {
     '<div class="meter-line"><span><b class="num">' + whole(t.total) + '</b> <span class="meter-note">of your ' + whole(budget) + ' week</span></span><span class="meter-note">' + esc(note) + '</span></div>' +
     '<div class="bar" aria-hidden="true">' + segs.map(s => '<span style="width:' + pct(t[s[0]]) + '%;background:var(' + s[2] + ')"></span>').join('') + '</div>' +
     '<div class="legend">' + segs.map(s => '<span><i style="background:var(' + s[2] + ')"></i>' + s[1] + ' <b class="num">' + whole(t[s[0]]) + '</b></span>').join('') + '</div>';
-  $('meter').insertAdjacentHTML('beforeend', ynabLine(t.total));
+  $('meter').insertAdjacentHTML('afterbegin', ynabLine(t.total));
   $('listCount').textContent = t.count;
 }
 
