@@ -183,6 +183,10 @@ const ICON = {
   drop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5s-6 6.6-6 10.9a6 6 0 0 0 12 0C18 10.1 12 3.5 12 3.5z"/></svg>',
   leaf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19c0-8 5-13 14-14-1 9-6 14-14 14z"/><path d="M5 19l7-7"/></svg>',
   close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  out: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3v8a2 2 0 0 0 2 2v8M5 3v5M9 3v5"/><path d="M17 21V3c-2 1.5-3 4-3 7s1 4 3 4"/></svg>',
+  pantry: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 10h16M4 16h16M8 6.5h3M8 13h3M8 18.5h3"/></svg>',
+  away: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></svg>',
+  leftovers: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="9" width="18" height="11" rx="2.5"/><path d="M5 9V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>',
   left: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
   right: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>',
   minus: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 12h12"/></svg>',
@@ -327,7 +331,7 @@ function renderWeek() {
         (sh.length ? '<span class="chip share">Shares ' + esc(c.products[sh[0].key].shareName) + ' with ' + days[sh[0].day].dow + '</span>' : '');
     } else {
       const s = SPECIAL[id] || SPECIAL.leftovers;
-      name = s.name; meta = '<span>' + esc(s.sub) + '</span>';
+      name = s.name; meta = '<span class="blocked">' + (ICON[id] || '') + esc(s.sub) + '</span>';
     }
     h += '<div class="day' + (dinners[id] ? '' : ' off') + '">' +
       '<div class="date"><small>' + (d.rel || d.dow) + '</small><b>' + d.date + '</b></div>' +
@@ -400,13 +404,18 @@ function itemRow(r) {
   return '<div class="item" data-on="' + r.on + '">' +
     '<button type="button" class="item-toggle" data-item="' + r.key + '" aria-pressed="' + r.on + '" aria-label="' + esc((r.on ? 'Remove ' : 'Add ') + displayName(r.product)) + '"></button>' +
     '<span class="box">' + ICON.check + '</span>' +
-    '<span class="item-main"><button type="button" class="item-name" data-product="' + r.key + '">' + esc(displayName(r.product)) + '</button><span class="item-sub"><span>' + esc(src) + '</span>' + saleChip(r.product) + dyeBadge(r.key, r.product) + '</span></span>' +
+    '<span class="item-main"><button type="button" class="item-name" data-product="' + r.key + '">' + esc(displayName(r.product)) + '</button><span class="item-sub"><span>' + esc(src) + '</span>' + saleChip(r.product) + (r.product.swap ? '<span class="chip cheap swapchip">Cheaper option</span>' : '') + dyeBadge(r.key, r.product) + '</span></span>' +
     '<span class="item-right"><span class="item-price num">' + money(r.cost) + '</span><br><span class="item-qty">' + (r.qty > 1 ? r.qty + ' × ' : '') + esc(r.product.size || '1') + '</span></span></div>';
 }
 function renderList() {
   const c = app.catalog, rows = buildList(c, week()), t = totals(rows);
   const unchecked = rows.filter(r => r.on && r.product.dyeRisk && !r.product.dyeChecked).length;
   let h = '<div class="list-summary"><div><div class="eyebrow">For pickup</div><div class="big num">' + money(t.total) + '</div><small>' + t.count + ' items · whole packages, combined across meals</small></div></div>';
+  const swaps = rows.filter(r => r.on && r.product.swap);
+  if (swaps.length) {
+    const save = swaps.reduce((s, r) => s + r.cost * r.product.swap.savingsPct / 100, 0);
+    h += '<div class="tip good">' + ICON.leaf + '<span><b>' + swaps.length + ' cheaper option' + (swaps.length > 1 ? 's' : '') + ' could save about ' + money(save) + ' a week.</b> Tap an item marked "Cheaper option" to see it and switch.</span></div>';
+  }
   if (unchecked) {
     h += '<div class="tip dye">' + ICON.eye + '<span><b>' + unchecked + ' item' + (unchecked > 1 ? 's' : '') + ' still need a label check.</b> Tap "Check label" once you\'ve confirmed there\'s no Red 40, Red 3, Blue 1 or Blue 2. The app remembers it after that.</span></div>';
   }
@@ -500,7 +509,10 @@ function swapSheet(dayIdx) {
   const c = app.catalog, w = week(), cur = w.plan[dayIdx], d = dayLabel(dayIdx);
   const head = '<div class="eyebrow">' + d.dow + ' ' + d.month + ' ' + d.date + '</div><h2 id="sheetTitle">Pick a dinner</h2>';
   const list = c.dinners.slice().sort((a, b) => itemsCost(a.items, c.products) - itemsCost(b.items, c.products));
-  let b = '<div class="opts">';
+  let b = '<div><h3 style="margin-bottom:8px">No cooking this day</h3><div class="blocks">' +
+    Object.entries(SPECIAL).map(([id, s]) => '<button class="block' + (cur === id ? ' current' : '') + '" type="button" data-pick="' + id + '" data-day="' + dayIdx + '">' +
+      ICON[id] + '<span>' + esc(s.short) + '</span></button>').join('') + '</div></div>' +
+    '<h3>Or pick a dinner</h3><div class="opts">';
   list.forEach(m => {
     const cost = itemsCost(m.items, c.products), [tc, tl] = tier(cost);
     const sh = sharedWith(c, w.plan, dayIdx, m.id).map(s => c.products[s.key].shareName).filter((v, i, a) => a.indexOf(v) === i);
@@ -510,9 +522,7 @@ function swapSheet(dayIdx) {
       (sh.length ? '<span class="chip share">Shares ' + esc(sh.slice(0, 2).join(' & ')) + '</span>' : '') +
       (used ? '<span>Already this week</span>' : '') + '</span></span><span class="opt-cost num">' + money(cost) + '</span></button>';
   });
-  b += '<div class="opts-row">' +
-    '<button class="opt' + (cur === 'leftovers' ? ' current' : '') + '" type="button" data-pick="leftovers" data-day="' + dayIdx + '"><span class="meal-name">Leftovers</span><span class="opt-cost">$0</span></button>' +
-    '<button class="opt' + (cur === 'out' ? ' current' : '') + '" type="button" data-pick="out" data-day="' + dayIdx + '"><span class="meal-name">Eat out</span><span class="opt-cost">—</span></button></div></div>';
+  b += '</div>';
   openSheet(head, b);
 }
 
@@ -579,6 +589,14 @@ function productSheet(key) {
       '<div><div class="kp-price num">' + (onSale(p) ? money(k.promo) + ' <s>' + money(k.regular) + '</s>' : money(k.regular)) + '</div>' +
       '<div class="kp-meta">' + esc([k.size, k.aisle].filter(Boolean).join(' · ')) + '</div>' +
       '<div class="kp-meta">' + saleChip(p) + dyeBadge(key, p) + (k.stock === 'LOW' ? '<span class="chip treat">Low stock</span>' : '') + (k.unavailable ? '<span class="chip treat">Not at your store right now</span>' : '') + '</div></div></div>';
+    if (p.swap) {
+      const s = p.swap;
+      b += '<div class="swapcard"><div class="eyebrow">Cheaper option · about ' + s.savingsPct + '% less for the same amount</div>' +
+        '<div class="kp">' + (s.image ? '<img src="' + esc(s.image) + '" alt="" width="64" height="64" loading="lazy">' : '<span></span>') +
+        '<div><div class="meal-name">' + esc(s.description) + '</div><div class="kp-meta">' + esc(s.size) + ' · ' + money(s.price) + '</div></div></div>' +
+        '<p class="why">Same kind of food at your store. It keeps anything like organic, protein or no sugar added. Switching clears the dye check, so give the new label a quick look.</p>' +
+        '<button class="cta" type="button" data-choose="' + s.productId + '" data-key="' + key + '">' + ICON.swap + 'Switch to this</button></div>';
+    }
     if (!k.confirmed) {
       b += '<div class="tip good">' + ICON.leaf + '<span>The app picked this one automatically. If it\'s what you buy, tap <b>This is right</b>. If not, search for the right one below.</span></div>' +
         '<button class="cta" type="button" data-confirm="' + key + '">' + ICON.check + 'This is right</button>';

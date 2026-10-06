@@ -1,9 +1,12 @@
 // Pure planning logic shared by the app and the tests. No DOM, no network.
 
 export const BUCKETS = ['dinner', 'breakfast', 'lunch', 'snack'];
+// Days with no cooking to shop for. Nothing from these goes on the list.
 export const SPECIAL = {
-  leftovers: { name: 'Leftovers night', sub: 'Use up the fridge' },
-  out: { name: 'Eating out', sub: 'Comes from the eating-out money' }
+  out: { name: 'Eating out', sub: 'Comes from the eating-out money', short: 'Eating out' },
+  pantry: { name: 'Pantry meal', sub: 'Cook from what\'s already on hand', short: 'Pantry meal' },
+  away: { name: 'Away from home', sub: 'Eating at someone else\'s house', short: 'Away' },
+  leftovers: { name: 'Leftovers night', sub: 'Use up the fridge', short: 'Leftovers' }
 };
 
 // ---------- Dates (local time; the plan always covers today and the next 6 days) ----------

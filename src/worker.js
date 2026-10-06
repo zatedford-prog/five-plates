@@ -1,7 +1,7 @@
 import { SEED_CATALOG } from './seed.js';
 import {
   KrogerError, findStores, searchProducts, productsById, bestMatch, currentPrice,
-  authorizeUrl, exchangeCode, freshUserToken, addToCart
+  authorizeUrl, exchangeCode, freshUserToken, addToCart, swapSearchTerm, findSwap
 } from './kroger.js';
 
 // Static files in /public are served straight from Cloudflare's edge; only /api/* reaches this code.
@@ -27,7 +27,8 @@ export default {
 
   // Daily price refresh (see "triggers" in wrangler.jsonc).
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(refreshPrices(env).catch(err => console.error('price refresh failed', err)));
+    // Prices first, then look for cheaper options on a batch of products (stays under the per-run request limit).
+    ctx.waitUntil(refreshPrices(env).then(() => findSwaps(env, 30)).catch(err => console.error('daily job failed', err)));
   }
 };
 
@@ -252,6 +253,10 @@ async function route(request, env, url) {
     return json({ matched, remaining: todo.length - batch.length });
   }
 
+  if (pathname === '/api/kroger/swaps' && method === 'POST') {
+    return json(await findSwaps(env, 30));
+  }
+
   if (pathname === '/api/kroger/refresh' && method === 'POST') {
     return json(await refreshPrices(env));
   }
@@ -267,6 +272,8 @@ async function route(request, env, url) {
     const [k] = await productsById(env, [body.productId], store.locationId);
     if (!k) return json({ error: 'That product isn\'t sold at your store.' }, 404);
     applyKroger(p, k, user !== 'admin', user); // picks made by maintenance scripts still need a family OK
+    delete p.swap;
+    p.swapCheckedAt = 0;
     delete p.noMatch;
     await putDoc(env, 'catalog', catalog);
     return json({ product: p });
@@ -305,6 +312,26 @@ function applyKroger(p, k, confirmed, user) {
   if (p.estPrice == null) p.estPrice = p.price;
   p.kroger = { ...k, confirmed: !!confirmed || !!(p.kroger && p.kroger.confirmed && p.kroger.upc === k.upc), confirmedBy: confirmed ? user : p.kroger?.confirmedBy, updatedAt: Date.now() };
   p.price = currentPrice(k);
+}
+
+// Checks the products we've looked at least recently for a cheaper option of the same kind.
+async function findSwaps(env, limit) {
+  const catalog = await getCatalog(env);
+  const store = catalog.settings.krogerStore;
+  if (!store) return { checked: 0 };
+  const todo = Object.values(catalog.products)
+    .filter(p => p.kroger && !p.pantry && p.store !== 'costco')
+    .sort((a, b) => (a.swapCheckedAt || 0) - (b.swapCheckedAt || 0))
+    .slice(0, limit);
+  let found = 0;
+  for (const p of todo) {
+    const results = await searchProducts(env, swapSearchTerm(p), store.locationId, 15);
+    const swap = findSwap(p, results);
+    if (swap) { p.swap = swap; found++; } else delete p.swap;
+    p.swapCheckedAt = Date.now();
+  }
+  await putDoc(env, 'catalog', catalog);
+  return { checked: todo.length, found };
 }
 
 async function refreshPrices(env) {

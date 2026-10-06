@@ -352,3 +352,21 @@ a.cta { text-decoration: none; }
 .pick.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .chip.costco { background: var(--sky); color: #08223A; }
 button.erow-name { display: block; font-weight: 700; font-size: 14.5px; }
+
+/* Blocked-off days (eating out, pantry meal, away, leftovers) */
+.blocks { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.block {
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--surface-2);
+  border-radius: 14px; padding: 12px; font-weight: 800; font-size: 14px; text-align: left;
+}
+.block svg { width: 20px; height: 20px; color: var(--accent); flex: none; }
+.block.current { border-color: var(--accent); background: var(--accent-soft); }
+.blocked { display: inline-flex; align-items: center; gap: 5px; }
+.blocked svg { width: 14px; height: 14px; }
+.day.off { background: var(--surface-2); border-style: dashed; }
+
+/* Cheaper option card */
+.swapcard { border: 1px solid var(--good); background: var(--good-soft); border-radius: 16px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.swapcard .eyebrow { color: var(--good); }
+.swapcard .kp { grid-template-columns: 64px 1fr; }
+.swapcard .kp img { width: 64px; height: 64px; }

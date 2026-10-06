@@ -148,12 +148,72 @@ export function currentPrice(k) { return k.promo > 0 && k.promo < k.regular ? k.
 // Picks the search result that best fits our product: shared words, matching brand, similar size.
 const STOP = new Set(['and', 'the', 'of', 'with', 'a', 'frozen', 'each', 'about', 'pack', 'ct', 'oz', 'lb']);
 const words = s => String(s).toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 1 && !STOP.has(w));
-function ounces(s) {
-  const m = String(s).toLowerCase().match(/([\d.]+)\s*(fl oz|oz|lb|gal|ct)\b/);
+export function ounces(s) {
+  const t = String(s).toLowerCase();
+  // "12 pack / 3.2 oz" or "8 ct / 1 oz" means 12 × 3.2 oz in total.
+  const multi = t.match(/([\d.]+)\s*(?:ct|pk|pack|count)\s*\/\s*([\d.]+)\s*(fl oz|oz|lb)\b/);
+  if (multi) return { n: +multi[1] * +multi[2] * (multi[3] === 'lb' ? 16 : 1), unit: 'oz' };
+  const m = t.match(/([\d.]+)\s*(fl oz|oz|lbs?|gal|ct)\b/);
   if (!m) return null;
   const n = +m[1];
-  return { n: m[2] === 'lb' ? n * 16 : m[2] === 'gal' ? n * 128 : n, unit: m[2] === 'ct' ? 'ct' : 'oz' };
+  return { n: /^lb/.test(m[2]) ? n * 16 : m[2] === 'gal' ? n * 128 : n, unit: m[2] === 'ct' ? 'ct' : 'oz' };
 }
+// ---------- Cheaper swaps ----------
+// Brand words come off the search so other brands (often the store brand) show up.
+const BRANDS = /\b(kroger|simple truth( organic)?|private selection|johnsonville|barilla|kodiak|pillsbury|krusteaz|ore-ida|heinz|campbell'?s|hormel|red baron|welch'?s|annie'?s|goodles|just bare|gallo|chomps|oscar mayer|tyson|cheerios|general mills|gogo squeez|snyder'?s|skinnypop|lactaid|mccormick|nature'?s own)\b/gi;
+export function swapSearchTerm(p) { return (p.search || p.name).replace(BRANDS, ' ').replace(/\(.*?\)/g, ' ').replace(/\s+/g, ' ').trim(); }
+
+// Packs sold by count (buns, bars, pouches) compare per piece; everything else per ounce.
+function unitPrice(price, size) {
+  const count = String(size).toLowerCase().match(/^\s*([\d.]+)\s*(?:ct|pk|pack|count|biscuits|rolls)\b/);
+  if (count && +count[1] > 0) return { per: price / +count[1], unit: 'piece' };
+  const s = ounces(size);
+  return s && s.n > 0 ? { per: price / s.n, unit: s.unit } : null;
+}
+
+// Words that mark a healthier version. A swap has to keep every one the current product has,
+// so organic stays organic, protein-packed stays protein-packed, and so on.
+const QUALITY = ['organic', 'protein', 'less fat', 'reduced fat', 'lean', 'grass fed', 'no sugar added', 'uncured', 'whole grain', 'whole wheat', 'gluten free', 'low sodium', 'less sodium', 'natural'];
+
+// The cheapest result that is the same kind of food: same store category, shares most of our
+// product's words, keeps its healthier qualities, similar package size (no 4 lb bags for an 8 oz
+// item), sold for pickup, and at least 15% less per ounce or count.
+export function findSwap(p, results) {
+  const k = p.kroger;
+  if (!k || p.noSwap) return null;
+  const mine = unitPrice(currentPrice(k), k.size);
+  if (!mine) return null;
+  const want = words(swapSearchTerm(p));
+  const myText = (k.brand + ' ' + k.description).toLowerCase();
+  const keep = QUALITY.filter(q => myText.includes(q));
+  const myCats = new Set(k.categories || []);
+  const mySize = ounces(k.size);
+  let best = null;
+  for (const r of results) {
+    if (r.productId === k.productId || r.pickup === false || !r.regular) continue;
+    const text = (r.brand + ' ' + r.description).toLowerCase();
+    if (/\b(dog|cat|pet|puppy|kitten|baby food)\b/.test(text)) continue;
+    if (myCats.size && r.categories && r.categories.length && !r.categories.some(c => myCats.has(c))) continue;
+    if (!keep.every(q => text.includes(q))) continue;
+    const have = new Set(words(text));
+    if (want.length && want.filter(w => have.has(w)).length / want.length < 0.6) continue;
+    const price = currentPrice(r);
+    const theirs = unitPrice(price, r.size);
+    if (!theirs || theirs.unit !== mine.unit) continue;
+    const theirSize = ounces(r.size);
+    if (mySize && theirSize) {
+      const sizeRatio = theirSize.n / mySize.n;
+      if (sizeRatio < 0.5 || sizeRatio > 3) continue;
+    }
+    const ratio = theirs.per / mine.per;
+    if (ratio > 0.85 || ratio < 0.3) continue; // too small a saving, or too good to be the same thing
+    if (!best || ratio < best.ratio) best = { ratio, r, price };
+  }
+  if (!best) return null;
+  const r = best.r;
+  return { productId: r.productId, description: r.description, size: r.size, price: best.price, image: r.image, savingsPct: Math.round((1 - best.ratio) * 100) };
+}
+
 export function bestMatch(product, results) {
   const want = words(product.name);
   const wantSize = ounces(product.size);
