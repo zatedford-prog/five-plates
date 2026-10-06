@@ -1,6 +1,6 @@
 // Pure planning logic shared by the app and the tests. No DOM, no network.
 
-export const BUCKETS = ['dinner', 'breakfast', 'lunch', 'snack'];
+export const BUCKETS = ['dinner', 'breakfast', 'lunch', 'snack', 'household'];
 // Days with no cooking to shop for. Nothing from these goes on the list.
 export const SPECIAL = {
   out: { name: 'Eating out', sub: 'Comes from the eating-out money', short: 'Eating out' },
@@ -62,6 +62,7 @@ export function normalizeHousehold(catalog, h) {
     bf: ints(src.bf, d.bf),
     ln: ints(src.ln, d.ln),
     sn: ints(src.sn, d.sn),
+    hh: ints(src.hh, d.hh || {}),
     on: src.on && typeof src.on === 'object' ? Object.fromEntries(Object.entries(src.on).map(([k, v]) => [k, !!v])) : {},
     sentAt: +src.sentAt || 0,
     updatedAt: +src.updatedAt || 0
@@ -79,6 +80,36 @@ export function seededRandom(seed) {
     h ^= h >>> 16;
     return (h >>> 0) / 4294967296;
   };
+}
+
+// Plan slots. Dinners are stored under the bare date; breakfast and lunch under "b:" / "l:" + date.
+export const SLOTS = { b: 'breakfast', l: 'lunch', d: 'dinner' };
+export function slotKey(slot, date) { return slot === 'd' ? date : slot + ':' + date; }
+
+// Breakfast or lunch for days with nothing picked yet: rotates through the family's usual picks
+// (weights = how many days a week they like each one) and avoids repeating yesterday.
+export function fillEveryday(list, weights, days, dates, slot, seed = '') {
+  const plan = dates.map(d => days[slotKey(slot, d)] || null);
+  const filled = [];
+  const pool = [];
+  for (const x of list) for (let i = 0; i < (weights[x.id] || 0); i++) pool.push(x.id);
+  if (!pool.length) list.slice(0, 3).forEach(x => pool.push(x.id));
+  plan.forEach((id, i) => {
+    if (id || !pool.length) return;
+    const rand = seededRandom(seed + slot + dates[i]);
+    let pick = pool[Math.floor(rand() * pool.length)];
+    for (let t = 0; t < 6 && i > 0 && pick === plan[i - 1] && pool.some(p => p !== pick); t++) pick = pool[Math.floor(rand() * pool.length)];
+    plan[i] = pick;
+    filled.push(slotKey(slot, dates[i]));
+  });
+  return { plan, filled };
+}
+
+// How many days each option appears, e.g. { cereal: 2, frozen: 3 }.
+export function tally(plan) {
+  const out = {};
+  plan.forEach(id => { if (id) out[id] = (out[id] || 0) + 1; });
+  return out;
 }
 
 // Fills days with no dinner picked yet, avoiding dinners already in the plan.
@@ -142,7 +173,7 @@ export function buildList(catalog, week) {
   const need = {}, from = {};
   const add = (k, q, bucket, label) => {
     if (!q || !P[k]) return;
-    const n = need[k] = need[k] || { dinner: 0, breakfast: 0, lunch: 0, snack: 0 };
+    const n = need[k] = need[k] || { dinner: 0, breakfast: 0, lunch: 0, snack: 0, household: 0 };
     n[bucket] += q;
     (from[k] = from[k] || new Set()).add(label);
   };
@@ -150,7 +181,8 @@ export function buildList(catalog, week) {
   catalog.breakfasts.forEach(b => { const d = week.bf[b.id] || 0; b.items.forEach(([k, q]) => add(k, q * d, 'breakfast', 'Breakfast')); });
   if (catalog.settings.milkPerWeek) add('milk', catalog.settings.milkPerWeek, 'breakfast', 'Breakfast');
   catalog.lunches.forEach(l => { const d = week.ln[l.id] || 0; l.items.forEach(([k, q]) => add(k, q * d, 'lunch', 'Lunch')); });
-  catalog.snacks.forEach(k => add(k, week.sn[k] || 0, 'snack', 'Snack shelf'));
+  catalog.snacks.forEach(k => add(k, week.sn[k] || 0, 'snack', 'Snacks & drinks'));
+  (catalog.household || []).forEach(k => add(k, (week.hh || {})[k] || 0, 'household', 'Household & coffee'));
   return Object.keys(need).map(k => {
     const p = P[k], n = need[k];
     const sum = BUCKETS.reduce((s, b) => s + n[b], 0);
@@ -163,7 +195,7 @@ export function buildList(catalog, week) {
 }
 
 export function totals(rows) {
-  const t = { dinner: 0, breakfast: 0, lunch: 0, snack: 0, total: 0, count: 0 };
+  const t = { dinner: 0, breakfast: 0, lunch: 0, snack: 0, household: 0, total: 0, count: 0 };
   rows.filter(r => r.on).forEach(r => {
     t.count += 1;
     t.total += r.cost;

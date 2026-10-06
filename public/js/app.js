@@ -1,6 +1,6 @@
 import {
   SPECIAL, upcomingDates, dayInfo, rangeLabel, isoDate, itemsCost, tier, byId,
-  normalizeHousehold, fillDinners, sharedWith, suggestPlan, buildList, totals, listAsText
+  normalizeHousehold, fillDinners, fillEveryday, tally, slotKey, SLOTS, sharedWith, suggestPlan, buildList, totals, listAsText
 } from './logic.js';
 
 // ---------- App state ----------
@@ -95,7 +95,7 @@ async function flush() {
     }
     if (app.dirty.household) {
       const h = app.household;
-      const res = await api('/api/household', { method: 'PUT', body: { bf: h.bf, ln: h.ln, sn: h.sn, on: h.on, sentAt: h.sentAt || 0 } });
+      const res = await api('/api/household', { method: 'PUT', body: { bf: h.bf, ln: h.ln, sn: h.sn, hh: h.hh || {}, on: h.on, sentAt: h.sentAt || 0 } });
       if (res.status === 401) { signOutLocal(); return; }
       if (res.status !== 200) return fail();
       h.updatedAt = res.data.updatedAt;
@@ -204,7 +204,7 @@ function dyeBadge(key, p) {
 }
 
 // ---------- Shell ----------
-const TITLES = { week: 'Dinners this week', every: 'Breakfast, lunch & snacks', list: 'Shopping list', meals: 'Our dinners' };
+const TITLES = { week: 'Your 7-day plan', every: 'Snacks, drinks & home', list: 'Shopping list', meals: 'Our dinners' };
 
 function renderShell() {
   $('app').innerHTML = `
@@ -235,10 +235,10 @@ function renderShell() {
   <nav class="tabs" role="tablist" aria-label="Sections">
     <button class="tab" role="tab" aria-selected="true" data-tab="week" id="tab-week" type="button">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>
-      Dinners</button>
+      Plan</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="every" id="tab-every" type="button">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11h13v1a6.5 6.5 0 0 1-6.5 6.5A6.5 6.5 0 0 1 4 12v-1z"/><path d="M17 12h1.5a2.5 2.5 0 0 1 0 5H16"/><path d="M8 3.5c-.8 1 .8 2 0 3M12 3.5c-.8 1 .8 2 0 3"/><path d="M6 21h9"/></svg>
-      Everyday</button>
+      Snacks</button>
     <button class="tab" role="tab" aria-selected="false" data-tab="list" id="tab-list" type="button">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="M3.5 6.5l1.2 1.2L6.8 5.5M3.5 12l1.2 1.2 2.1-2.2M3.5 17.5l1.2 1.2 2.1-2.2"/></svg>
       <span>List <span class="count num" id="listCount">0</span></span></button>
@@ -274,17 +274,31 @@ function setTab(t) {
   $('screen-' + t).scrollTop = 0;
 }
 
-// The next 7 days, with any empty day filled by a suggestion (and saved so both phones agree).
+// The next 7 days of breakfast, lunch and dinner. Empty slots get a suggestion,
+// saved right away so both phones agree.
 function upcoming() {
-  const dates = upcomingDates(new Date());
-  const { plan, filled } = fillDinners(app.catalog, app.dinners.days, dates);
-  if (filled.length) filled.forEach((d, i) => { app.dinners.days[d] = plan[dates.indexOf(d)]; app.dirty.days[d] = true; }), flushSoon();
-  return { dates, plan, today: dates[0] };
+  const c = app.catalog, days = app.dinners.days, dates = upcomingDates(new Date());
+  const d = fillDinners(c, days, dates);
+  const b = fillEveryday(c.breakfasts, app.household.bf, days, dates, 'b');
+  const l = fillEveryday(c.lunches, app.household.ln, days, dates, 'l');
+  const save = (filled, plan, slot) => filled.forEach(key => {
+    const date = key.replace(/^[bl]:/, '');
+    days[key] = plan[dates.indexOf(date)];
+    app.dirty.days[key] = true;
+  });
+  save(d.filled.map(x => slotKey('d', x)), d.plan, 'd');
+  save(b.filled, b.plan, 'b');
+  save(l.filled, l.plan, 'l');
+  if (d.filled.length || b.filled.length || l.filled.length) flushSoon();
+  return { dates, plan: d.plan, bplan: b.plan, lplan: l.plan, today: dates[0] };
 }
-// What the list and totals work from: the next 7 dinners plus the household picks.
+function slotPlan(u, slot) { return slot === 'b' ? u.bplan : slot === 'l' ? u.lplan : u.plan; }
+function slotList(slot) { return slot === 'b' ? app.catalog.breakfasts : slot === 'l' ? app.catalog.lunches : app.catalog.dinners; }
+// What the list and totals work from: the next 7 days of meals plus the weekly shelves.
 function week() {
-  const h = app.household, { plan } = upcoming();
-  return { plan, bf: h.bf, ln: h.ln, sn: h.sn, on: h.on, sentAt: h.sentAt };
+  const h = app.household, u = upcoming();
+  if (!h.hh) h.hh = {};
+  return { plan: u.plan, bf: tally(u.bplan), ln: tally(u.lplan), sn: h.sn, hh: h.hh, on: h.on, sentAt: h.sentAt };
 }
 function dayLabel(i) { const u = upcoming(); return dayInfo(u.dates[i], u.today); }
 function renderAll() {
@@ -299,8 +313,8 @@ function renderMeter() {
   const budget = c.settings.weeklyBudget;
   const pct = x => Math.min(100, x / budget * 100);
   const left = budget - t.total;
-  const note = left >= 0 ? whole(left) + ' left for household & extras' : 'A little over. Try swapping one thing.';
-  const segs = [['dinner', 'Dinners', '--accent'], ['breakfast', 'Breakfast', '--butter'], ['lunch', 'Lunch', '--sky'], ['snack', 'Snacks', '--clay']];
+  const note = left >= 0 ? whole(left) + ' left this week' : 'A little over. Try swapping one thing.';
+  const segs = [['dinner', 'Dinners', '--accent'], ['breakfast', 'Breakfast', '--butter'], ['lunch', 'Lunch', '--sky'], ['snack', 'Snacks', '--clay'], ['household', 'Household', '--muted']];
   $('meter').innerHTML =
     '<div class="meter-line"><span><b class="num">' + whole(t.total) + '</b> <span class="meter-note">of your ' + whole(budget) + ' week</span></span><span class="meter-note">' + esc(note) + '</span></div>' +
     '<div class="bar" aria-hidden="true">' + segs.map(s => '<span style="width:' + pct(t[s[0]]) + '%;background:var(' + s[2] + ')"></span>').join('') + '</div>' +
@@ -315,28 +329,37 @@ function dismissible(key, title, text) {
     '<button class="x" type="button" data-hide="' + key + '" aria-label="Hide this note">' + ICON.close + '</button></div>';
 }
 
+// One card per day with breakfast, lunch and dinner. Each meal shows its cost and can be opened or swapped.
 function renderWeek() {
-  const c = app.catalog, w = week(), dinners = byId(c.dinners), u = upcoming();
+  const c = app.catalog, u = upcoming(), P = c.products;
   const days = u.dates.map(d => dayInfo(d, u.today));
-  let h = dismissible('hello-week', 'Your next 7 dinners', 'Tap a dinner to see what it costs, or swap it. Each morning the list moves forward a day. Changes show up on both of your phones.');
-  w.plan.forEach((id, i) => {
+  const lists = { b: byId(c.breakfasts), l: byId(c.lunches), d: byId(c.dinners) };
+  let h = dismissible('hello-plan', 'Your next 7 days', 'Tap any meal to see what it costs, or Swap to change it. Each morning the plan moves forward a day, and changes show up on both phones.');
+  u.dates.forEach((date, i) => {
     const d = days[i];
-    let name, meta;
-    if (dinners[id]) {
-      const m = dinners[id], cost = itemsCost(m.items, c.products), [tc, tl] = tier(cost);
-      const sh = sharedWith(c, w.plan, i, id);
-      name = m.name;
-      meta = '<span class="num">' + money(cost) + '</span><span class="chip ' + tc + '">' + tl + '</span>' +
-        (m.idea ? '<span class="chip idea">New idea</span>' : '') +
-        (sh.length ? '<span class="chip share">Shares ' + esc(c.products[sh[0].key].shareName) + ' with ' + days[sh[0].day].dow + '</span>' : '');
-    } else {
-      const s = SPECIAL[id] || SPECIAL.leftovers;
-      name = s.name; meta = '<span class="blocked">' + (ICON[id] || '') + esc(s.sub) + '</span>';
+    let dayCost = 0, rows = '';
+    for (const slot of ['b', 'l', 'd']) {
+      const id = slotPlan(u, slot)[i], m = lists[slot][id];
+      let name, meta;
+      if (m) {
+        const cost = itemsCost(m.items, P);
+        dayCost += cost;
+        name = m.name;
+        meta = '<span class="num">' + money(cost) + '</span>';
+        if (slot === 'd') {
+          const [tc, tl] = tier(cost), sh = sharedWith(c, u.plan, i, id);
+          meta += '<span class="chip ' + tc + '">' + tl + '</span>' + (m.idea ? '<span class="chip idea">New idea</span>' : '') +
+            (sh.length ? '<span class="chip share">Shares ' + esc(P[sh[0].key].shareName) + ' with ' + days[sh[0].day].dow + '</span>' : '');
+        }
+      } else {
+        const s = SPECIAL[id] || SPECIAL.leftovers;
+        name = s.name; meta = '<span class="blocked">' + (ICON[id] || '') + esc(s.sub) + '</span>';
+      }
+      rows += '<div class="slot' + (m ? '' : ' off') + '"><span class="slot-label">' + SLOTS[slot] + '</span>' +
+        '<button class="meal-btn" type="button" data-open="' + i + '" data-slot="' + slot + '"><span class="meal-name">' + esc(name) + '</span><span class="meal-meta">' + meta + '</span></button>' +
+        '<button class="swap" type="button" data-swap="' + i + '" data-slot="' + slot + '" aria-label="Swap ' + d.dow + ' ' + SLOTS[slot] + '">' + ICON.swap + 'Swap</button></div>';
     }
-    h += '<div class="day' + (dinners[id] ? '' : ' off') + '">' +
-      '<div class="date"><small>' + (d.rel || d.dow) + '</small><b>' + d.date + '</b></div>' +
-      '<button class="meal-btn" type="button" data-open="' + i + '"><span class="meal-name">' + esc(name) + '</span><span class="meal-meta">' + meta + '</span></button>' +
-      '<button class="swap" type="button" data-swap="' + i + '" aria-label="Swap ' + d.dow + ' dinner">' + ICON.swap + 'Swap</button></div>';
+    h += '<section class="daycard"><div class="daycard-head"><span><b>' + (d.rel || d.dow) + '</b> ' + d.month + ' ' + d.date + '</span><span class="num">' + money(dayCost) + '</span></div>' + rows + '</section>';
   });
   h += '<p class="hint">' + esc(priceSourceNote()) + '</p>';
   $('screen-week').innerHTML = h;
@@ -348,48 +371,28 @@ function stepper(group, id, n, canAdd, label) {
     '<span class="num">' + n + '</span>' +
     '<button type="button" data-step="' + group + '" data-id="' + id + '" data-d="1" aria-label="More ' + esc(label) + '"' + (canAdd ? '' : ' disabled') + '>' + ICON.plus + '</button></span>';
 }
-function daySection(title, unit, list, picks, group, bucketCost, tip, kind) {
+// A shelf of things bought by the package: snacks and drinks, or household supplies.
+function shelfSection(title, keys, picks, group, cost, kind, tip) {
   const P = app.catalog.products;
-  const used = list.reduce((s, x) => s + (picks[x.id] || 0), 0);
-  let h = '<section class="sec"><div class="sec-head"><div><h2>' + title + '</h2><small>' + used + ' of 7 ' + unit + ' planned</small>' +
-    '<div class="days-dots" aria-hidden="true">' + Array.from({ length: 7 }, (_, i) => '<i class="' + (i < used ? 'on' : '') + '"></i>').join('') + '</div></div>' +
-    '<div class="sec-cost num">' + whole(bucketCost) + '<small>this week</small></div></div>';
-  list.forEach(x => {
-    const n = picks[x.id] || 0, cost = itemsCost(x.items, P);
-    const risky = x.items.filter(([k]) => P[k] && P[k].dyeRisk);
-    const allChecked = risky.length && risky.every(([k]) => P[k].dyeChecked);
-    const badge = !risky.length ? '' : allChecked
-      ? '<span class="safe">' + ICON.shield + 'Dye-free, checked</span>'
-      : '<span class="chk">' + ICON.eye + 'Check label</span>';
-    const sub = (cost ? money(cost) + ' a day' : 'Free') + (x.note ? ' · ' + esc(x.note) : '');
-    h += '<div class="erow' + (n ? '' : ' zero') + '"><div style="min-width:0"><div class="erow-name">' + esc(x.name) + '</div><div class="erow-sub"><span>' + sub + '</span>' + badge + '</div></div>' +
-      stepper(group, x.id, n, used < 7, x.name) + '</div>';
-  });
-  h += '<button class="addrow" type="button" data-add="' + kind + '">' + ICON.plus + 'Add a ' + kind + '</button>';
-  if (tip) h += '<p class="sec-tip">' + esc(tip) + '</p>';
-  return h + '</section>';
-}
-function renderEvery() {
-  const c = app.catalog, w = week(), P = c.products, t = totals(buildList(c, w));
-  const BF = byId(c.breakfasts);
-  let h = dismissible('hello-every', 'No daily planning needed', 'Pick how many mornings and lunches of each. The app works out how much to buy.');
-  let tip = 'Includes about ' + c.settings.milkPerWeek + ' half-gallons of Lactaid milk for drinking.';
-  if (BF.pancakes && BF.frozen) {
-    tip = 'Krusteaz pancakes cost about ' + money(itemsCost(BF.pancakes.items, P)) + ' a morning vs ' + money(itemsCost(BF.frozen.items, P)) +
-      ' for frozen. Make a double batch on the weekend and freeze the extras for the toaster. ' + tip;
-  }
-  h += daySection('Breakfast', 'mornings', c.breakfasts, w.bf, 'bf', t.breakfast, tip, 'breakfast');
-  h += daySection('Lunch', 'lunches', c.lunches, w.ln, 'ln', t.lunch, null, 'lunch');
-  const packs = c.snacks.reduce((s, k) => s + (w.sn[k] || 0), 0);
-  h += '<section class="sec"><div class="sec-head"><div><h2>Snack shelf</h2><small>' + packs + ' packs for the week</small></div><div class="sec-cost num">' + whole(t.snack) + '<small>this week</small></div></div>';
-  c.snacks.forEach(k => {
-    const p = P[k], n = w.sn[k] || 0;
+  const packs = keys.reduce((s, k) => s + (picks[k] || 0), 0);
+  let h = '<section class="sec"><div class="sec-head"><div><h2>' + title + '</h2><small>' + packs + ' pack' + (packs === 1 ? '' : 's') + ' this week</small></div><div class="sec-cost num">' + whole(cost) + '<small>this week</small></div></div>';
+  keys.forEach(k => {
+    const p = P[k], n = picks[k] || 0;
     if (!p) return;
-    h += '<div class="erow' + (n ? '' : ' zero') + '"><div style="min-width:0"><button type="button" class="erow-name ing-name" data-product="' + k + '">' + esc(p.name) + '</button><div class="erow-sub"><span>' + money(p.price) + (p.size ? ' · ' + esc(p.size) : '') + '</span>' + (p.store === 'costco' ? '<span class="chip costco">Costco</span>' : '') + dyeBadge(k, p) + '</div></div>' +
-      stepper('sn', k, n, n < 6, p.name) + '</div>';
+    h += '<div class="erow' + (n ? '' : ' zero') + '"><div style="min-width:0"><button type="button" class="erow-name ing-name" data-product="' + k + '">' + esc(displayName(p)) + '</button><div class="erow-sub"><span>' + money(p.price) + (p.size ? ' · ' + esc(p.size) : '') + '</span>' + (p.store === 'costco' ? '<span class="chip costco">Costco</span>' : '') + dyeBadge(k, p) + '</div></div>' +
+      stepper(group, k, n, n < 6, p.name) + '</div>';
   });
-  h += '<button class="addrow" type="button" data-add="snack">' + ICON.plus + 'Add a snack</button>';
-  h += '<p class="sec-tip">Costco boxes last a few weeks, so tap + only in the week you restock. Fill a snack bin on Sunday. When it\'s empty, it\'s fruit until next week. Snacks grabbed in the aisle are an easy way to go over, and they\'re where dyes hide most.</p></section>';
+  h += '<button class="addrow" type="button" data-add="' + kind.split(' ')[0] + '">' + ICON.plus + 'Add a ' + kind + '</button>';
+  return h + '<p class="sec-tip">' + esc(tip) + '</p></section>';
+}
+
+function renderEvery() {
+  const c = app.catalog, w = week(), t = totals(buildList(c, w));
+  let h = '';
+  h += shelfSection('Snacks & drinks', c.snacks, w.sn, 'sn', t.snack, 'snack',
+    'Costco boxes last a few weeks, so tap + only in the week you restock. Fill a snack bin on Sunday; when it’s empty, it’s fruit until next week. Snacks and drinks grabbed in the aisle are an easy way to go over, and they’re where dyes hide most.');
+  h += shelfSection('Household & coffee', c.household || [], w.hh, 'hh', t.household, 'household item',
+    'These last a while, so tap + only in the week you’re running low. They come out of the same $400.');
   $('screen-every').innerHTML = h;
 }
 
@@ -475,15 +478,16 @@ function useText(q, p) {
   return frac(q) + (q < 1 ? ' of ' : ' × ') + (p.size || 'pack');
 }
 
-function mealSheet(id, dayIdx) {
-  const c = app.catalog, P = c.products, m = byId(c.dinners)[id];
-  if (!m) { swapSheet(dayIdx); return; }
+function mealSheet(id, dayIdx, slot = 'd') {
+  const c = app.catalog, P = c.products, m = byId(slotList(slot))[id];
+  if (!m) { swapSheet(dayIdx, slot); return; }
+  const what = SLOTS[slot];
   const cost = itemsCost(m.items, P), portions = c.settings.adultPortions;
   const bought = m.items.filter(([k]) => !P[k].pantry).reduce((t, [k, q]) => t + Math.ceil(q - .02) * P[k].price, 0);
   const days = upcoming().dates.map(d => dayInfo(d, upcoming().today));
   const head = '<div class="eyebrow">' + (dayIdx != null ? days[dayIdx].dow + ' ' + days[dayIdx].month + ' ' + days[dayIdx].date : 'Meal card') + '</div><h2 id="sheetTitle">' + esc(m.name) + '</h2>';
   let b = '<div class="stats">' +
-    '<div class="stat"><b class="num">' + money(cost) + '</b><small>True cost of this dinner</small></div>' +
+    '<div class="stat"><b class="num">' + money(cost) + '</b><small>True cost of this ' + what + '</small></div>' +
     '<div class="stat"><b class="num">' + money(cost / portions) + '</b><small>Per adult portion</small></div>' +
     '<div class="stat"><b>All 5</b><small>About ' + portions + ' adult portions</small></div></div>';
   if (m.takeout) {
@@ -500,29 +504,32 @@ function mealSheet(id, dayIdx) {
     if (!p) return;
     b += '<div class="ing"><span><button type="button" class="ing-name" data-product="' + k + '">' + esc(displayName(p)) + '</button>' + (p.pantry ? ' <span class="pantry-tag">pantry</span>' : '') + '<small>' + esc(useText(q, p)) + ' ' + saleChip(p) + dyeBadge(k, p) + '</small></span><b class="num">' + money(p.price * q) + '</b></div>';
   });
-  b += '</div><p class="why">True cost counts only what this meal uses. Bought just for this dinner, the receipt would be about ' + whole(bought) + '. The rest carries into other meals.</p>';
-  if (dayIdx != null) b += '<button class="cta ghost" type="button" data-swap="' + dayIdx + '">' + ICON.swap + 'Swap this dinner</button>';
+  b += '</div><p class="why">True cost counts only what this meal uses. Bought just for this ' + what + ', the receipt would be about ' + whole(bought) + '. The rest carries into other meals.</p>';
+  if (dayIdx != null) b += '<button class="cta ghost" type="button" data-swap="' + dayIdx + '" data-slot="' + slot + '">' + ICON.swap + 'Swap this ' + what + '</button>';
   openSheet(head, b);
 }
 
-function swapSheet(dayIdx) {
-  const c = app.catalog, w = week(), cur = w.plan[dayIdx], d = dayLabel(dayIdx);
-  const head = '<div class="eyebrow">' + d.dow + ' ' + d.month + ' ' + d.date + '</div><h2 id="sheetTitle">Pick a dinner</h2>';
-  const list = c.dinners.slice().sort((a, b) => itemsCost(a.items, c.products) - itemsCost(b.items, c.products));
-  let b = '<div><h3 style="margin-bottom:8px">No cooking this day</h3><div class="blocks">' +
-    Object.entries(SPECIAL).map(([id, s]) => '<button class="block' + (cur === id ? ' current' : '') + '" type="button" data-pick="' + id + '" data-day="' + dayIdx + '">' +
+function swapSheet(dayIdx, slot = 'd') {
+  const c = app.catalog, u = upcoming(), plan = slotPlan(u, slot), cur = plan[dayIdx], d = dayLabel(dayIdx), what = SLOTS[slot];
+  const head = '<div class="eyebrow">' + d.dow + ' ' + d.month + ' ' + d.date + '</div><h2 id="sheetTitle">Pick a ' + what + '</h2>';
+  const list = slotList(slot).slice().sort((a, b) => itemsCost(a.items, c.products) - itemsCost(b.items, c.products));
+  const pick = id => 'data-pick="' + id + '" data-day="' + dayIdx + '" data-slot="' + slot + '"';
+  let b = '<div><h3 style="margin-bottom:8px">' + (slot === 'd' ? 'No cooking this day' : 'Not eating at home') + '</h3><div class="blocks">' +
+    Object.entries(SPECIAL).map(([id, s]) => '<button class="block' + (cur === id ? ' current' : '') + '" type="button" ' + pick(id) + '>' +
       ICON[id] + '<span>' + esc(s.short) + '</span></button>').join('') + '</div></div>' +
-    '<h3>Or pick a dinner</h3><div class="opts">';
+    '<h3>Or pick a ' + what + '</h3><div class="opts">';
   list.forEach(m => {
     const cost = itemsCost(m.items, c.products), [tc, tl] = tier(cost);
-    const sh = sharedWith(c, w.plan, dayIdx, m.id).map(s => c.products[s.key].shareName).filter((v, i, a) => a.indexOf(v) === i);
-    const used = w.plan.some((id, i) => i !== dayIdx && id === m.id);
-    b += '<button class="opt' + (cur === m.id ? ' current' : '') + '" type="button" data-pick="' + m.id + '" data-day="' + dayIdx + '"><span style="min-width:0"><span class="meal-name">' + esc(m.name) + '</span><span class="meal-meta"><span class="chip ' + tc + '">' + tl + '</span>' +
+    const sh = slot === 'd' ? sharedWith(c, plan, dayIdx, m.id).map(s => c.products[s.key].shareName).filter((v, i, a) => a.indexOf(v) === i) : [];
+    const used = plan.filter((id, i) => i !== dayIdx && id === m.id).length;
+    b += '<button class="opt' + (cur === m.id ? ' current' : '') + '" type="button" ' + pick(m.id) + '><span style="min-width:0"><span class="meal-name">' + esc(m.name) + '</span><span class="meal-meta">' +
+      (slot === 'd' ? '<span class="chip ' + tc + '">' + tl + '</span>' : '') +
       (m.idea ? '<span class="chip idea">New idea</span>' : '') +
       (sh.length ? '<span class="chip share">Shares ' + esc(sh.slice(0, 2).join(' & ')) + '</span>' : '') +
-      (used ? '<span>Already this week</span>' : '') + '</span></span><span class="opt-cost num">' + money(cost) + '</span></button>';
+      (used ? '<span>' + (slot === 'd' ? 'Already this week' : used + ' other day' + (used > 1 ? 's' : '')) + '</span>' : '') + '</span></span><span class="opt-cost num">' + money(cost) + '</span></button>';
   });
   b += '</div>';
+  if (slot !== 'd') b += '<button class="addrow" type="button" data-add="' + what + '">' + ICON.plus + 'Add a new ' + what + '</button>';
   openSheet(head, b);
 }
 
@@ -649,11 +656,11 @@ async function chooseProduct(key, productId) {
 const LASTS = [1, 2, 3, 4, 5, 7];
 function addSheet(kind, source = 'ks') {
   const unit = kind === 'breakfast' ? 'mornings' : kind === 'lunch' ? 'lunches' : '';
-  const head = '<div class="eyebrow">' + (kind === 'snack' ? 'Snack shelf' : kind === 'breakfast' ? 'Breakfast' : 'Lunch') + '</div><h2 id="sheetTitle">Add a ' + kind + '</h2>';
+  const head = '<div class="eyebrow">' + ({ snack: 'Snacks & drinks', household: 'Household & coffee', breakfast: 'Breakfast', lunch: 'Lunch' }[kind]) + '</div><h2 id="sheetTitle">Add a ' + (kind === 'household' ? 'household item' : kind) + '</h2>';
   let b = '<div class="seg" role="tablist">' +
     '<button type="button" role="tab" data-addsrc="ks" data-kind="' + kind + '" aria-selected="' + (source === 'ks') + '">King Soopers</button>' +
     '<button type="button" role="tab" data-addsrc="costco" data-kind="' + kind + '" aria-selected="' + (source === 'costco') + '">Costco or other</button></div>';
-  if (kind !== 'snack') {
+  if (kind === 'breakfast' || kind === 'lunch') {
     b += '<div class="field"><label for="addName">Name it</label><input id="addName" type="text" placeholder="' + (kind === 'breakfast' ? 'Turkey bacon & eggs' : 'Goodles mac & cheese') + '" autocomplete="off"></div>' +
       '<div class="field"><label>One package lasts about</label><div class="chips" id="lastsChips">' +
       LASTS.map(n => '<button type="button" class="pick' + (n === 3 ? ' on' : '') + '" data-lasts="' + n + '">' + n + ' ' + (n === 1 ? unit.replace(/s$/, '').replace('lunche', 'lunch') : unit) + '</button>').join('') + '</div></div>';
@@ -710,10 +717,11 @@ async function addEveryday(kind, body) {
   app.catalog = res.data.catalog;
   if (!app.dirty.household) app.household = normalizeHousehold(app.catalog, res.data.household);
   else if (kind === 'snack') app.household.sn[res.data.entryId] = Math.max(1, app.household.sn[res.data.entryId] || 0);
+  else if (kind === 'household') (app.household.hh = app.household.hh || {})[res.data.entryId] = Math.max(1, app.household.hh[res.data.entryId] || 0);
   saveCache();
   renderAll();
   closeSheet();
-  toast(kind === 'snack' ? 'Added to the snack shelf' : 'Added. Tap + to plan it.');
+  toast(kind === 'snack' || kind === 'household' ? 'Added for this week' : 'Added. Tap + to plan it.');
 }
 
 async function savePrice(key) {
@@ -793,10 +801,12 @@ function copySheet() {
 }
 
 function suggest() {
-  const u = upcoming(), plan = suggestPlan(app.catalog);
-  u.dates.forEach((d, i) => setDinner(d, plan[i]));
+  const c = app.catalog, u = upcoming(), plan = suggestPlan(c), seed = String(Date.now());
+  const b = fillEveryday(c.breakfasts, app.household.bf, {}, u.dates, 'b', seed);
+  const l = fillEveryday(c.lunches, app.household.ln, {}, u.dates, 'l', seed);
+  u.dates.forEach((d, i) => { setDinner(d, plan[i]); setDinner(slotKey('b', d), b.plan[i]); setDinner(slotKey('l', d), l.plan[i]); });
   renderAll();
-  toast('New week suggested');
+  toast('New 7 days suggested');
 }
 
 function toast(msg) {
@@ -833,14 +843,14 @@ document.addEventListener('click', e => {
     const again = document.querySelector('[data-step="' + ds.step + '"][data-id="' + ds.id + '"][data-d="' + ds.d + '"]');
     if (again && !again.disabled) again.focus();
   }
-  else if (ds.open != null) mealSheet(w.plan[+ds.open], +ds.open);
-  else if (ds.swap != null) swapSheet(+ds.swap);
+  else if (ds.open != null) { const slot = ds.slot || 'd'; mealSheet(slotPlan(upcoming(), slot)[+ds.open], +ds.open, slot); }
+  else if (ds.swap != null) swapSheet(+ds.swap, ds.slot || 'd');
   else if (ds.pick) {
-    const d = +ds.day;
-    setDinner(upcoming().dates[d], ds.pick);
+    const d = +ds.day, slot = ds.slot || 'd';
+    setDinner(slotKey(slot, upcoming().dates[d]), ds.pick);
     renderAll();
     closeSheet();
-    const m = byId(app.catalog.dinners)[ds.pick];
+    const m = byId(slotList(slot))[ds.pick];
     toast(dayLabel(d).dow + ': ' + (m ? m.name : SPECIAL[ds.pick].name));
   }
   else if (ds.item) {

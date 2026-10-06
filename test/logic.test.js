@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SEED_CATALOG } from '../src/seed.js';
 import {
-  upcomingDates, dayInfo, rangeLabel, normalizeHousehold, fillDinners, buildList, totals,
+  upcomingDates, dayInfo, rangeLabel, normalizeHousehold, fillDinners, fillEveryday, tally, slotKey, buildList, totals,
   seededRandom, suggestPlan, itemsCost, listAsText
 } from '../public/js/logic.js';
 
@@ -31,6 +31,21 @@ test('empty days get a suggestion; picked days stay as they are', () => {
   assert.equal(a.filled.length, 5);
   assert.equal(new Set(a.plan).size, 7, 'no repeats: ' + a.plan);
   assert.deepEqual(fillDinners(catalog, days, dates).plan, a.plan, 'same answer on every phone');
+});
+
+test('breakfast and lunch fill from the usual picks, without repeating yesterday', () => {
+  const dates = upcomingDates(new Date(2026, 9, 5));
+  const weights = { cereal: 3, frozen: 4 };
+  const days = { 'b:2026-10-05': 'swedish' };
+  const a = fillEveryday(catalog.breakfasts, weights, days, dates, 'b');
+  assert.equal(a.plan[0], 'swedish');                     // a picked day stays
+  assert.deepEqual(a.filled, dates.slice(1).map(d => 'b:' + d));
+  assert.ok(a.plan.slice(1).every(id => id === 'cereal' || id === 'frozen'));
+  for (let i = 2; i < 7; i++) assert.notEqual(a.plan[i], a.plan[i - 1], 'repeat on ' + dates[i]);
+  assert.deepEqual(fillEveryday(catalog.breakfasts, weights, days, dates, 'b').plan, a.plan, 'same on every phone');
+  assert.deepEqual(tally(['cereal', 'frozen', 'cereal', 'out']), { cereal: 2, frozen: 1, out: 1 });
+  assert.equal(slotKey('b', '2026-10-05'), 'b:2026-10-05');
+  assert.equal(slotKey('d', '2026-10-05'), '2026-10-05');
 });
 
 test('every referenced product exists in the catalog', () => {

@@ -8,6 +8,7 @@ import {
 const COOKIE = 'fp_session';
 const SESSION_DAYS = 400; // the longest browsers allow, so phones stay signed in
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const PLAN_KEY_RE = /^(?:[bl]:)?\d{4}-\d{2}-\d{2}$/; // dinner date, or breakfast/lunch as b:/l: + date
 const KEY_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const PRODUCT_RE = /^\/api\/products\/([A-Za-z0-9_-]{1,40})$/;
 const MAX_BODY = 256 * 1024;
@@ -64,13 +65,13 @@ async function route(request, env, url) {
   if (pathname === '/api/dinners' && method === 'PUT') {
     const body = await readJson(request);
     const incoming = body && body.days && typeof body.days === 'object' ? Object.entries(body.days) : null;
-    if (!incoming || incoming.length > 60 || !incoming.every(([d, id]) => DATE_RE.test(d) && typeof id === 'string' && id.length <= 40)) {
+    if (!incoming || incoming.length > 60 || !incoming.every(([d, id]) => PLAN_KEY_RE.test(d) && typeof id === 'string' && id.length <= 40)) {
       return json({ error: 'Invalid dinners' }, 400);
     }
     const doc = (await getDoc(env, 'dinners')) || { days: {} };
     for (const [d, id] of incoming) doc.days[d] = id;
     const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
-    for (const d of Object.keys(doc.days)) if (d < cutoff) delete doc.days[d];
+    for (const d of Object.keys(doc.days)) if (d.replace(/^[bl]:/, '') < cutoff) delete doc.days[d];
     doc.updatedAt = Date.now();
     doc.updatedBy = user;
     await putDoc(env, 'dinners', doc);
@@ -81,7 +82,7 @@ async function route(request, env, url) {
   if (pathname === '/api/everyday' && method === 'POST') {
     const body = await readJson(request);
     const kind = body && body.kind;
-    if (!['breakfast', 'lunch', 'snack'].includes(kind)) return json({ error: 'Invalid item' }, 400);
+    if (!['breakfast', 'lunch', 'snack', 'household'].includes(kind)) return json({ error: 'Invalid item' }, 400);
     const catalog = await getCatalog(env);
     let key, label;
     if (body.custom) {
@@ -109,7 +110,12 @@ async function route(request, env, url) {
     const name = String(body.name || label).trim().slice(0, 60) || label;
     const household = await getHousehold(env);
     let entryId = key;
-    if (kind === 'snack') {
+    if (kind === 'household') {
+      catalog.household = catalog.household || [];
+      if (!catalog.household.includes(key)) catalog.household.push(key);
+      household.hh = household.hh || {};
+      household.hh[key] = Math.max(1, household.hh[key] || 0);
+    } else if (kind === 'snack') {
       if (!catalog.snacks.includes(key)) catalog.snacks.push(key);
       household.sn[key] = Math.max(1, household.sn[key] || 0);
     } else {
@@ -271,7 +277,8 @@ async function route(request, env, url) {
     if (!store) return json({ error: 'Pick your King Soopers store first.' }, 409);
     const [k] = await productsById(env, [body.productId], store.locationId);
     if (!k) return json({ error: 'That product isn\'t sold at your store.' }, 404);
-    applyKroger(p, k, user !== 'admin', user); // picks made by maintenance scripts still need a family OK
+    // Picks made by maintenance scripts still need a family OK, unless they came from the family's own order history.
+    applyKroger(p, k, user !== 'admin' || body.confirmed === true, user);
     delete p.swap;
     p.swapCheckedAt = 0;
     delete p.noMatch;
@@ -480,13 +487,13 @@ function cleanHousehold(h) {
     }
     return out;
   };
-  const bf = counts(h.bf), ln = counts(h.ln), sn = counts(h.sn), on = {};
-  if (!bf || !ln || !sn) return null;
+  const bf = counts(h.bf), ln = counts(h.ln), sn = counts(h.sn), hh = counts(h.hh || {}), on = {};
+  if (!bf || !ln || !sn || !hh) return null;
   for (const [k, v] of Object.entries(h.on || {})) {
     if (!KEY_RE.test(k)) return null;
     on[k] = !!v;
   }
-  return { bf, ln, sn, on, sentAt: Math.max(0, +h.sentAt || 0) };
+  return { bf, ln, sn, hh, on, sentAt: Math.max(0, +h.sentAt || 0) };
 }
 
 function json(data, status = 200, headers = {}) {
