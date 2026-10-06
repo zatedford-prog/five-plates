@@ -384,3 +384,14 @@ button.erow-name { display: block; font-weight: 700; font-size: 14.5px; }
 .slot.off { background: var(--surface-2); }
 .slot.off .meal-name { color: var(--muted); }
 .slot .swap { height: 34px; padding: 0 9px; font-size: 12px; }
+
+/* YNAB line under the budget meter */
+.ynab {
+  display: flex; gap: 8px; align-items: flex-start; text-align: left; width: 100%; border: 1px solid var(--line);
+  background: var(--surface); border-radius: 12px; padding: 8px 10px; font-size: 12.5px; line-height: 1.4; color: var(--muted); margin-top: 2px;
+}
+.ynab b { color: var(--ink); }
+.ynab-tag { flex: none; font-size: 10px; font-weight: 800; letter-spacing: .06em; background: var(--accent); color: var(--accent-ink); border-radius: 6px; padding: 2px 6px; margin-top: 1px; }
+.ynab.tight { border-color: var(--butter); background: var(--butter-soft); }
+.ynab.over { border-color: var(--clay); background: var(--warn-soft); }
+.sel { font: inherit; font-size: 15px; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; }

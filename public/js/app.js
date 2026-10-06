@@ -19,7 +19,7 @@ const app = {
 
 const $ = id => document.getElementById(id);
 const money = n => '$' + n.toFixed(2);
-const whole = n => '$' + Math.round(n);
+const whole = n => '$' + Math.round(n).toLocaleString('en-US');
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const local = {
   get(k) { try { return JSON.parse(localStorage.getItem(k) || 'null'); } catch { return null; } },
@@ -123,6 +123,7 @@ async function boot() {
     renderShell();
     renderAll();
     if (await load({ quiet: true }) && app.user) renderAll();
+    loadYnab();
   } else {
     let res;
     try { res = await api('/api/bootstrap'); }
@@ -132,6 +133,7 @@ async function boot() {
     renderShell();
     renderAll();
   }
+  if (!app.ynab) loadYnab();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
@@ -140,6 +142,7 @@ document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState !== 'visible' || !app.user) return;
   renderAll();
   if (await load({ quiet: true }) && app.user) renderAll();
+  loadYnab();
 });
 window.addEventListener('online', () => { if (isDirty()) flush(); });
 
@@ -307,6 +310,35 @@ function renderAll() {
   renderMeter(); renderWeek(); renderEvery(); renderList(); renderMeals();
 }
 
+// ---------- YNAB ----------
+// Reads the Groceries and Dining out balances (the server caches them for a few minutes).
+async function loadYnab() {
+  try {
+    const res = await api('/api/ynab');
+    if (res.status !== 200) return;
+    app.ynab = res.data;
+    local.set('fp-ynab', app.ynab);
+    renderMeter();
+  } catch { /* offline: keep the last numbers */ }
+}
+function weeksLeftInMonth(now = new Date()) {
+  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+  return (daysInMonth - now.getDate() + 1) / 7;
+}
+function ynabLine(planTotal) {
+  const y = app.ynab || local.get('fp-ynab');
+  if (!y || !y.grocery) return '';
+  const g = y.grocery, weeks = weeksLeftInMonth(), pace = Math.max(0, g.balance) / weeks;
+  const month = new Date().toLocaleDateString(undefined, { month: 'long' });
+  const state = g.balance <= 0 ? 'over' : planTotal > pace * 1.05 ? 'tight' : 'ok';
+  const msg = state === 'over' ? 'Groceries is spent for ' + month + '.'
+    : state === 'tight' ? 'This plan is about ' + whole(planTotal - pace) + ' more than your weekly pace.'
+    : 'This plan fits your pace.';
+  return '<button type="button" class="ynab ' + state + '" data-ynab="1"><span class="ynab-tag">YNAB</span>' +
+    '<span><b class="num">' + whole(g.balance) + '</b> left in Groceries for ' + month + ' · about <b class="num">' + whole(pace) + '</b> a week. ' + esc(msg) +
+    (y.eatingOut ? ' Dining out: <b class="num">' + whole(y.eatingOut.balance) + '</b> left.' : '') + '</span></button>';
+}
+
 // ---------- Header meter ----------
 function renderMeter() {
   const c = app.catalog, t = totals(buildList(c, week()));
@@ -319,6 +351,7 @@ function renderMeter() {
     '<div class="meter-line"><span><b class="num">' + whole(t.total) + '</b> <span class="meter-note">of your ' + whole(budget) + ' week</span></span><span class="meter-note">' + esc(note) + '</span></div>' +
     '<div class="bar" aria-hidden="true">' + segs.map(s => '<span style="width:' + pct(t[s[0]]) + '%;background:var(' + s[2] + ')"></span>').join('') + '</div>' +
     '<div class="legend">' + segs.map(s => '<span><i style="background:var(' + s[2] + ')"></i>' + s[1] + ' <b class="num">' + whole(t[s[0]]) + '</b></span>').join('') + '</div>';
+  $('meter').insertAdjacentHTML('beforeend', ynabLine(t.total));
   $('listCount').textContent = t.count;
 }
 
@@ -735,6 +768,27 @@ async function savePrice(key) {
   toast('Price saved');
 }
 
+// ---------- YNAB sheet ----------
+async function ynabSheet() {
+  openSheet('<div class="eyebrow">YNAB</div><h2 id="sheetTitle">Budget categories</h2>', '<p class="hint">Loading your categories…</p>');
+  let res;
+  try { res = await api('/api/ynab/categories'); } catch { $('sheetBody').innerHTML = '<p class="hint">You’re offline.</p>'; return; }
+  if (res.status !== 200) { $('sheetBody').innerHTML = '<p class="hint">' + esc(res.data?.error || 'YNAB didn’t answer.') + '</p>'; return; }
+  const y = app.ynab || {}, cats = res.data.categories;
+  const select = (id, cur) => '<select id="' + id + '" class="sel"><option value="">None</option>' +
+    cats.map(c => '<option value="' + c.id + '"' + (c.id === cur ? ' selected' : '') + '>' + esc(c.name) + ' (' + whole(c.balance) + ' left)</option>').join('') + '</select>';
+  $('sheetBody').innerHTML =
+    '<p class="why">Five Plates only reads these from YNAB. It never changes your budget. Numbers refresh every few minutes.</p>' +
+    '<div class="field"><label for="ynGrocery">Groceries category</label>' + select('ynGrocery', y.grocery && y.grocery.id) + '</div>' +
+    '<div class="field"><label for="ynOut">Eating out category</label>' + select('ynOut', y.eatingOut && y.eatingOut.id) + '</div>' +
+    '<button class="cta" type="button" id="ynSave">Save</button>';
+  $('ynSave').onclick = async () => {
+    const r = await api('/api/ynab/settings', { method: 'PUT', body: { grocery: $('ynGrocery').value || null, eatingOut: $('ynOut').value || null } });
+    if (r.status !== 200) { toast('That didn’t save. Try again.'); return; }
+    closeSheet(); toast('Saved'); loadYnab();
+  };
+}
+
 // ---------- Send to King Soopers ----------
 function sendSheet() {
   const c = app.catalog, rows = buildList(c, week()).filter(r => r.on);
@@ -820,10 +874,11 @@ function toast(msg) {
 
 // ---------- Events ----------
 document.addEventListener('click', e => {
-  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide],[data-product],[data-choose],[data-confirm],[data-add],[data-addsrc],[data-lasts]');
+  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide],[data-product],[data-choose],[data-confirm],[data-add],[data-addsrc],[data-lasts],[data-ynab]');
   if (!el || !app.catalog) return;
   const ds = el.dataset, w = week();
   if (ds.tab) setTab(ds.tab);
+  else if (ds.ynab) ynabSheet();
   else if (ds.add) addSheet(ds.add);
   else if (ds.addsrc) addSheet(ds.kind, ds.addsrc);
   else if (ds.lasts) { document.querySelectorAll('#lastsChips .pick').forEach(b => b.classList.toggle('on', b === el)); }

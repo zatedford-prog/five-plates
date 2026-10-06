@@ -1,4 +1,5 @@
 import { SEED_CATALOG } from './seed.js';
+import { YnabError, listCategories, summary as ynabSummary } from './ynab.js';
 import {
   KrogerError, findStores, searchProducts, productsById, bestMatch, currentPrice,
   authorizeUrl, exchangeCode, freshUserToken, addToCart, swapSearchTerm, findSwap
@@ -20,7 +21,7 @@ export default {
     try {
       return await route(request, env, url);
     } catch (err) {
-      if (err instanceof KrogerError) return json({ error: err.message }, err.status);
+      if (err instanceof KrogerError || err instanceof YnabError) return json({ error: err.message }, err.status);
       console.error(err);
       return json({ error: 'Something went wrong on the server.' }, 500);
     }
@@ -158,6 +159,39 @@ async function route(request, env, url) {
     if (!body || !body.products || !Array.isArray(body.dinners)) return json({ error: 'Invalid catalog' }, 400);
     await putDoc(env, 'catalog', body);
     return json({ ok: true });
+  }
+
+  // ---------- YNAB (read-only) ----------
+  // Admin-only: shows whether the stored YNAB token looks right, without revealing it.
+  if (pathname === '/api/ynab/diag' && method === 'GET' && user === 'admin') {
+    const t = env.YNAB_TOKEN || '';
+    return json({ length: t.length, trimmedLength: t.trim().length, hasSpace: /\s/.test(t.trim()), looksLikeToken: /^[A-Za-z0-9_-]{30,}$/.test(t.trim()) });
+  }
+
+  if (pathname === '/api/ynab/categories' && method === 'GET') {
+    return json(await listCategories(env));
+  }
+
+  if (pathname === '/api/ynab' && method === 'GET') {
+    const picks = (await getCatalog(env)).settings.ynab || {};
+    const ids = [picks.grocery, picks.eatingOut].filter(Boolean);
+    // Local development only (.dev.vars): sample numbers so the screen can be checked without a real token.
+    if (env.YNAB_FAKE) return json({ connected: true, month: '2026-10-01', grocery: { id: 'sample', name: 'Groceries', balance: 1699.16 }, eatingOut: { id: 'sample2', name: 'Dining out', balance: 389.28 } });
+    if (!env.YNAB_TOKEN) return json({ connected: false });
+    if (!ids.length) return json({ connected: true, needsSetup: true });
+    const s = await ynabSummary(env, ids);
+    const find = id => s.categories.find(c => c.id === id) || null;
+    return json({ connected: true, month: s.month, grocery: find(picks.grocery), eatingOut: find(picks.eatingOut), fetchedAt: s.fetchedAt });
+  }
+
+  if (pathname === '/api/ynab/settings' && method === 'PUT') {
+    const body = await readJson(request);
+    const ok = v => v === null || (typeof v === 'string' && /^[0-9a-f-]{36}$/.test(v));
+    if (!body || !ok(body.grocery ?? null) || !ok(body.eatingOut ?? null)) return json({ error: 'Invalid category' }, 400);
+    const catalog = await getCatalog(env);
+    catalog.settings.ynab = { grocery: body.grocery || null, eatingOut: body.eatingOut || null };
+    await putDoc(env, 'catalog', catalog);
+    return json({ settings: catalog.settings });
   }
 
   // ---------- King Soopers cart ----------
