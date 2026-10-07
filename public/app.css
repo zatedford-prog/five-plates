@@ -416,3 +416,17 @@ button.erow-name { display: block; font-weight: 700; font-size: 14.5px; }
 /* Toast with an Undo button */
 .toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 10px; white-space: normal; max-width: calc(100% - 32px); }
 .toast-btn { border: 0; background: var(--butter); color: #2E2400; border-radius: 999px; padding: 4px 12px; font-weight: 800; font-size: 13px; }
+
+/* Recipe import review */
+.twobtn { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.twobtn .addrow { padding: 12px 10px; font-size: 13.5px; }
+.rline { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; background: var(--surface); }
+.rline.off { background: var(--surface-2); }
+.rline.off .rline-name { opacity: .55; }
+.rline-top { display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: start; }
+.rline-text { font-size: 13px; color: var(--muted); }
+.rline-match { display: grid; grid-template-columns: 36px 1fr auto; gap: 10px; align-items: center; }
+.rline-match img { width: 36px; height: 36px; object-fit: contain; border-radius: 8px; background: #fff; }
+.rline-name { font-weight: 700; font-size: 14px; line-height: 1.25; min-width: 0; }
+.rline-name small { display: block; font-weight: 600; color: var(--muted); font-size: 12px; }
+.havebox:disabled { opacity: .35; }

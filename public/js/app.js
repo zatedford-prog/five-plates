@@ -498,7 +498,7 @@ function renderList() {
 function renderMeals() {
   const c = app.catalog;
   const list = c.dinners.slice().sort((a, b) => itemsCost(a.items, c.products) - itemsCost(b.items, c.products));
-  let h = '<button class="addrow boxed" type="button" data-newmeal="d">' + ICON.plus + 'Create a new dinner</button><p class="lib-note">Cheapest first. Every meal is sized for your family: two adults and three kids eat about ' + c.settings.adultPortions + ' adult portions.</p>';
+  let h = '<div class="twobtn"><button class="addrow boxed" type="button" data-newmeal="d">' + ICON.plus + 'Create a new dinner</button><button class="addrow boxed" type="button" data-recipe="d">' + ICON.copy + 'Import a recipe</button></div><p class="lib-note">Cheapest first. Every meal is sized for your family: two adults and three kids eat about ' + c.settings.adultPortions + ' adult portions.</p>';
   list.forEach(m => {
     const cost = itemsCost(m.items, c.products), [tc, tl] = tier(cost);
     h += '<button class="lib" type="button" data-meal="' + m.id + '"><span style="min-width:0"><span class="meal-name">' + esc(m.name) + '</span><span class="meal-meta"><span class="chip ' + tc + '">' + tl + '</span>' + (m.idea ? '<span class="chip idea">New idea</span>' : '') + (m.takeout ? '<span>vs ' + whole(m.takeout) + ' takeout</span>' : '') + '</span></span>' +
@@ -714,7 +714,7 @@ function swapSheet(dayIdx, slot = 'd') {
       (used ? '<span>' + (slot === 'd' ? 'Already this week' : used + ' other day' + (used > 1 ? 's' : '')) + '</span>' : '') + '</span></span><span class="opt-cost num">' + money(cost) + '</span></button>';
   });
   b += '</div>';
-  b = b.replace('<h3>Or pick a ' + what + '</h3>', '<button class="addrow boxed" type="button" data-newmeal="' + slot + '" data-day="' + dayIdx + '">' + ICON.plus + 'Create a new ' + what + '</button><h3>Or pick a ' + what + '</h3>');
+  b = b.replace('<h3>Or pick a ' + what + '</h3>', '<div class="twobtn"><button class="addrow boxed" type="button" data-newmeal="' + slot + '" data-day="' + dayIdx + '">' + ICON.plus + 'Create a new ' + what + '</button><button class="addrow boxed" type="button" data-recipe="' + slot + '" data-day="' + dayIdx + '">' + ICON.copy + 'Import a recipe</button></div><h3>Or pick a ' + what + '</h3>');
   openSheet(head, b);
 }
 
@@ -942,6 +942,112 @@ async function ynabSheet() {
   };
 }
 
+// ---------- Import a recipe ----------
+// Step 1: paste a link or the ingredient list.
+function recipeSheet(slot = 'd', dayIdx = null) {
+  const what = SLOTS[slot];
+  openSheet('<div class="eyebrow">Import a recipe</div><h2 id="sheetTitle">Add a ' + what + ' from a recipe</h2>',
+    '<div class="field"><label for="recipeIn">Paste a recipe link, or the ingredient list</label>' +
+    '<textarea id="recipeIn" rows="6" placeholder="https://www.example.com/chicken-enchiladas\n\nor\n\n1 lb chicken breast\n8 flour tortillas\n2 cups shredded cheese" style="width:100%;font:inherit;font-size:15px;border:1px solid var(--line);border-radius:14px;padding:11px 12px;background:var(--surface);color:var(--ink)"></textarea></div>' +
+    '<button class="cta" type="button" id="recipeGo">Read the recipe</button>' +
+    '<p class="why">Works with most recipe sites. A few big ones (like Allrecipes) block apps from reading them. For those, copy the ingredient list and paste it here instead.</p>');
+  setTimeout(() => $('recipeIn').focus(), 300);
+  $('recipeGo').onclick = async () => {
+    const raw = $('recipeIn').value.trim();
+    if (!raw) { $('recipeIn').focus(); return; }
+    const isUrl = /^https?:\/\/\S+$/i.test(raw);
+    const btn = $('recipeGo');
+    btn.disabled = true; btn.textContent = isUrl ? 'Reading the recipe…' : 'Matching ingredients…';
+    let res;
+    try { res = await api('/api/recipe/import', { method: 'POST', body: isUrl ? { url: raw } : { text: raw } }); }
+    catch { btn.disabled = false; btn.textContent = 'Read the recipe'; toast('You\'re offline. Try again when you have signal.'); return; }
+    if (res.status !== 200) { btn.disabled = false; btn.textContent = 'Read the recipe'; toast(res.data?.error || 'That didn\'t work. Try pasting the ingredients.'); return; }
+    app.recipe = { ...res.data, slot, dayIdx, source: isUrl ? raw : '' };
+    // Pantry basics start as "already have"; anything without a match starts skipped until someone picks one.
+    app.recipe.lines.forEach(l => { l.use = !l.skip && !l.pantry && !!l.match; });
+    reviewSheet();
+  };
+}
+
+// Step 2: check each ingredient's match and amount, then save it as a meal.
+function reviewSheet() {
+  const r = app.recipe, what = SLOTS[r.slot];
+  const using = r.lines.filter(l => l.use && l.match);
+  const total = using.reduce((s, l) => s + l.match.price * l.qty, 0);
+  let b = '<div class="field"><label for="recipeName">Meal name</label><input id="recipeName" type="text" value="' + esc(r.name || '') + '" placeholder="Name this ' + what + '"></div>' +
+    '<p class="why">' + (r.servings ? 'The recipe serves ' + r.servings + '. Your family eats about ' + app.catalog.settings.adultPortions + ' adult portions. ' : '') +
+    'Check each match and how much of the package the meal uses. Ticked items go on the list.</p>';
+  r.lines.forEach((l, i) => {
+    const m = l.match;
+    b += '<div class="rline' + (l.use ? '' : ' off') + '">' +
+      '<div class="rline-top"><button type="button" class="havebox" data-rtoggle="' + i + '" aria-pressed="' + l.use + '" aria-label="Use ' + esc(l.text) + '"' + (m ? '' : ' disabled') + '>' + ICON.check + '</button>' +
+      '<span class="rline-text">' + esc(l.text) + (l.pantry ? ' <span class="pantry-tag">pantry</span>' : '') + (l.skip ? ' <span class="pantry-tag">skip</span>' : '') + '</span></div>';
+    if (!l.skip) {
+      b += '<div class="rline-match">' + (m ? (m.image ? '<img src="' + esc(m.image) + '" alt="" width="36" height="36" loading="lazy">' : '<span></span>') +
+        '<span class="rline-name">' + esc(m.description) + '<small>' + esc(m.size || '') + ' · ' + money(m.price) + '</small></span>' : '<span></span><span class="rline-name"><small>No match yet</small></span>') +
+        '<button type="button" class="textlink" data-rchange="' + i + '">' + (m ? 'Change' : 'Find it') + '</button></div>';
+      if (m && l.use) b += '<div class="chips">' + [[0.25, '¼'], [0.5, '½'], [1, '1'], [2, '2']].map(([q, t]) => '<button type="button" class="pick' + (l.qty === q ? ' on' : '') + '" data-rqty="' + i + '" data-q="' + q + '">' + t + ' pkg</button>').join('') + '</div>';
+    }
+    b += '</div>';
+  });
+  if (r.truncated) b += '<p class="why">Only the first 25 ingredients were read.</p>';
+  b += '<button class="cta" type="button" id="recipeSave">' + ICON.plus + 'Save as a ' + what + ' · about ' + money(total) + '</button>';
+  openSheet('<div class="eyebrow">Import a recipe</div><h2 id="sheetTitle">Check the ingredients</h2>', b);
+  $('recipeName').oninput = e => { r.name = e.target.value; };
+  $('recipeSave').onclick = saveRecipe;
+}
+
+// Pick a different King Soopers product for one recipe line.
+function recipeChangeSheet(i) {
+  const l = app.recipe.lines[i];
+  let b = '<p class="why">' + esc(l.text) + '</p>';
+  if (l.alternatives && l.alternatives.length) {
+    b += '<div class="opts">' + l.alternatives.map(a => '<button class="opt kopt" type="button" data-ralt="' + i + '" data-pid="' + a.productId + '">' +
+      (a.image ? '<img src="' + esc(a.image) + '" alt="" width="44" height="44" loading="lazy">' : '<span></span>') +
+      '<span style="min-width:0"><span class="meal-name">' + esc(a.description) + '</span><span class="meal-meta">' + esc(a.size || '') + '</span></span><span class="opt-cost num">' + money(a.price) + '</span></button>').join('') + '</div>';
+  }
+  b += '<div class="field"><label for="rSearch">Search King Soopers</label><input id="rSearch" type="search" value="' + esc(l.term) + '" autocomplete="off"></div><div class="opts" id="rResults"></div>' +
+    '<button class="cta ghost" type="button" id="rBack">Back to the recipe</button>';
+  openSheet('<div class="eyebrow">Import a recipe</div><h2 id="sheetTitle">Pick the product</h2>', b);
+  const input = $('rSearch');
+  let timer;
+  const search = () => searchInto('rResults', input.value, 'rpick');
+  input.oninput = () => { clearTimeout(timer); timer = setTimeout(search, 400); };
+  input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); search(); } };
+  $('rBack').onclick = reviewSheet;
+  $('rResults').onclick = e => {
+    const btn = e.target.closest('[data-rpick]');
+    if (!btn) return;
+    const name = btn.querySelector('.meal-name').textContent, size = btn.querySelector('.meal-meta').firstChild?.textContent || '';
+    const price = parseFloat(btn.querySelector('.opt-cost').textContent.replace('$', '')) || 0;
+    const img = btn.querySelector('img');
+    l.match = { productId: btn.dataset.rpick, description: name, size, price, image: img ? img.src : '' };
+    l.use = true;
+    reviewSheet();
+  };
+  search();
+}
+
+async function saveRecipe() {
+  const r = app.recipe, name = (r.name || '').trim();
+  if (!name) { $('recipeName').focus(); toast('Give the meal a name'); return; }
+  const items = r.lines.filter(l => l.use && l.match).map(l => (l.match.key ? { key: l.match.key, qty: l.qty } : { productId: l.match.productId, qty: l.qty }));
+  if (!items.length) { toast('Tick at least one ingredient'); return; }
+  const btn = $('recipeSave');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  let res;
+  try { res = await api('/api/recipe/save', { method: 'POST', body: { list: LIST_OF[r.slot], name, items, source: r.source } }); }
+  catch { btn.disabled = false; toast('You\'re offline. Try again when you have signal.'); return; }
+  if (res.status !== 200) { btn.disabled = false; toast(res.data?.error || 'That didn\'t save. Try again.'); return; }
+  app.catalog = res.data.catalog;
+  saveCache();
+  if (r.dayIdx != null) pickMeal(slotKey(r.slot, upcoming().dates[r.dayIdx]), res.data.id);
+  renderAll();
+  app.recipe = null;
+  mealSheet(res.data.id, r.dayIdx, r.slot);
+  toast('Saved ' + name);
+}
+
 // ---------- Send to King Soopers ----------
 function sendSheet() {
   const c = app.catalog, rows = buildList(c, week()).filter(r => r.on);
@@ -1047,7 +1153,7 @@ function toast(msg, actionLabel, action) {
 
 // ---------- Events ----------
 document.addEventListener('click', e => {
-  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide],[data-product],[data-choose],[data-confirm],[data-add],[data-addsrc],[data-lasts],[data-ynab],[data-scale],[data-have],[data-dropitem],[data-additem],[data-newmeal],[data-qty],[data-extra],[data-dropextra]');
+  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide],[data-product],[data-choose],[data-confirm],[data-add],[data-addsrc],[data-lasts],[data-ynab],[data-scale],[data-have],[data-dropitem],[data-additem],[data-newmeal],[data-qty],[data-extra],[data-dropextra],[data-recipe],[data-rtoggle],[data-rchange],[data-rqty],[data-ralt]');
   if (!el || !app.catalog) return;
   const ds = el.dataset, w = week();
   if (ds.tab) setTab(ds.tab);
@@ -1070,6 +1176,15 @@ document.addEventListener('click', e => {
   }
   else if (ds.newmeal) newMealSheet(ds.newmeal, ds.day != null && ds.day !== '' ? +ds.day : null);
   else if (ds.extra) extraSheet();
+  else if (ds.recipe) recipeSheet(ds.recipe, ds.day != null && ds.day !== '' ? +ds.day : null);
+  else if (ds.rtoggle != null) { const l = app.recipe.lines[+ds.rtoggle]; l.use = !l.use; reviewSheet(); }
+  else if (ds.rchange != null) recipeChangeSheet(+ds.rchange);
+  else if (ds.rqty != null) { app.recipe.lines[+ds.rqty].qty = +ds.q; reviewSheet(); }
+  else if (ds.ralt != null) {
+    const l = app.recipe.lines[+ds.ralt], alt = l.alternatives.find(x => x.productId === ds.pid);
+    l.alternatives = [l.match, ...l.alternatives.filter(x => x !== alt)].filter(Boolean);
+    l.match = alt; l.use = true; reviewSheet();
+  }
   else if (ds.dropextra) { delete app.household.extra[ds.dropextra]; markHousehold(); renderAll(); closeSheet(); toast('Removed from the list'); }
   else if (ds.add) addSheet(ds.add);
   else if (ds.addsrc) addSheet(ds.kind, ds.addsrc);

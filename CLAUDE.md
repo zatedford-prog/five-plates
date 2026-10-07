@@ -26,6 +26,8 @@ Zach (Android) is the builder. Both use it as an installed home-screen app.
 - `src/worker.js`: Cloudflare Worker (sign-in, saving, routes). `src/kroger.js`: King Soopers prices,
   product search, cheaper swaps, cart. `src/ynab.js`: read-only YNAB balances. `src/seed.js`: the
   original starting catalog (the live catalog lives in the database and has moved on from it).
+  `src/recipe.js`: recipe import (reads the schema.org Recipe block from a link, or pasted lines) and
+  the ingredient-line parser; matching to products happens in the `/api/recipe/import` route.
 - Database: Cloudflare D1, one table `docs` of JSON documents:
   - `catalog`: products (each optionally linked to an exact King Soopers product under `kroger`),
     dinners, breakfasts, lunches, snacks, household items, settings (store, YNAB category ids).
@@ -45,7 +47,8 @@ Zach (Android) is the builder. Both use it as an installed home-screen app.
 ## Commands
 ```
 npm test          # logic tests (node --test)
-npm run dev       # local server on :8787 (test passcode and sample YNAB numbers in .dev.vars)
+npm run dev       # local server on :8787. .dev.vars has a test passcode, YNAB_FAKE (sample balances)
+                  # and KROGER_FAKE (recipe import searches saved products instead of King Soopers)
 npx wrangler deploy
 ```
 Secrets (Cloudflare only): FAMILY_PASSCODE, SESSION_SECRET, ALLOWED_EMAILS, KROGER_CLIENT_ID,
@@ -58,8 +61,13 @@ Maintenance: `ADMIN_TOKEN` (also in the git-ignored `.dev.vars`) lets scripts ca
 `confirmed: true` is sent (use that only for items from the family's own purchase history).
 
 ## Gotchas
+- Some big recipe sites (Allrecipes, Simply Recipes) block the Worker (HTTP 402); the app tells people to paste
+  the ingredients instead.
+- In edit scripts, use `str.replace(x, () => y)`: a plain replacement string treats `- Git Bash heredocs on this machine can eat backslashes in inline scripts. Write edit scripts to a file
+  (or use the Edit tool) when they contain regexes.
+- The King Soopers phone app is slow to show items added through the API; the website shows them.
+` and `## Gotchas
+` specially.
 - Git Bash heredocs on this machine can eat backslashes in inline scripts. Write edit scripts to a file
   (or use the Edit tool) when they contain regexes.
 - The King Soopers phone app is slow to show items added through the API; the website shows them.
-- Open idea not built yet: importing recipes (paste text or a link), which would need a decision about
-  an Anthropic API key.

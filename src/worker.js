@@ -1,5 +1,6 @@
 import { SEED_CATALOG } from './seed.js';
 import { YnabError, listCategories, summary as ynabSummary } from './ynab.js';
+import { fetchRecipe, linesFromText, parseLine, MAX_LINES } from './recipe.js';
 import {
   KrogerError, findStores, searchProducts, productsById, bestMatch, currentPrice,
   authorizeUrl, exchangeCode, freshUserToken, addToCart, swapSearchTerm, findSwap
@@ -191,6 +192,75 @@ async function route(request, env, url) {
     if (!body || !body.products || !Array.isArray(body.dinners)) return json({ error: 'Invalid catalog' }, 400);
     await putDoc(env, 'catalog', body);
     return json({ ok: true });
+  }
+
+  // ---------- Recipe import ----------
+  // Reads a recipe link (or pasted ingredient lines) and matches each line to a King Soopers product.
+  if (pathname === '/api/recipe/import' && method === 'POST') {
+    const body = await readJson(request);
+    const catalog = await getCatalog(env);
+    const store = catalog.settings.krogerStore;
+    if (!store) return json({ error: 'Pick your King Soopers store first.' }, 409);
+    let recipe;
+    if (body && body.url) {
+      let u;
+      try { u = new URL(String(body.url)); } catch { return json({ error: 'That doesn’t look like a link.' }, 400); }
+      if (!/^https?:$/.test(u.protocol)) return json({ error: 'That doesn’t look like a link.' }, 400);
+      recipe = await fetchRecipe(u.toString());
+      if (recipe.error) return json({ error: recipe.error }, 422);
+    } else if (body && body.text) {
+      recipe = { name: '', servings: null, lines: linesFromText(String(body.text).slice(0, 8000)) };
+      if (!recipe.lines.length) return json({ error: 'Paste one ingredient per line.' }, 400);
+    } else return json({ error: 'Paste a link or the ingredients.' }, 400);
+
+    const lines = recipe.lines.slice(0, MAX_LINES).map(parseLine);
+    // Products the family already uses win over a fresh search, so the list stays consistent.
+    const known = Object.entries(catalog.products).filter(([, p]) => p.kroger);
+    const shelf = new Set([...(catalog.snacks || []), ...(catalog.household || [])]);
+    for (const l of lines) {
+      if (l.skip) continue;
+      // Whole words only, so "salt" doesn't match "salted butter" and "lemon" doesn't match "lemonade".
+      const words = l.term.split(' ').filter(w => w.length > 1);
+      const hasAll = text => words.length && words.every(w => new RegExp('\\b' + w.replace(/[^a-z0-9]/g, '') + 's?\\b', 'i').test(text));
+      // Reuse a product the family already buys only for specific (2+ word) ingredients, never a snack or
+      // household item ("salsa" shouldn't become salsa-flavored chips).
+      const mine = words.length >= 2 && known
+        .filter(([key, p]) => !shelf.has(key) && hasAll(p.name) && p.name.split(/\W+/).filter(Boolean).length - words.length <= 2)
+        .sort((x, y) => x[1].name.length - y[1].name.length)[0];
+      if (mine) { l.match = { ...pick(mine[1].kroger), key: mine[0] }; continue; }
+      const results = env.KROGER_FAKE
+        ? localSearch(catalog, l.term) // local development without Kroger keys (.dev.vars)
+        : await searchProducts(env, l.term, store.locationId, 8);
+      const fits = results.filter(r => hasAll(r.brand + ' ' + r.description));
+      const best = fits.length ? bestMatch({ name: l.term, size: '' }, fits) : null;
+      l.match = best ? pick(best) : null; // no good fit: the family searches for it on the review screen
+      l.alternatives = (fits.length ? fits : results).filter(r => !best || r.productId !== best.productId).slice(0, 3).map(pick);
+    }
+    return json({ name: recipe.name, servings: recipe.servings, lines, truncated: recipe.lines.length > MAX_LINES });
+  }
+
+  // Saves a reviewed recipe as a new meal: [{ productId | key, qty }].
+  if (pathname === '/api/recipe/save' && method === 'POST') {
+    const body = await readJson(request);
+    const list = MEAL_LISTS[body && body.list];
+    const name = String((body && body.name) || '').trim().slice(0, 60);
+    const items = Array.isArray(body && body.items) ? body.items.slice(0, MAX_LINES) : null;
+    if (!list || !name || !items) return json({ error: 'Give the meal a name.' }, 400);
+    const catalog = await getCatalog(env);
+    const meal = { id: 'm' + Date.now().toString(36), name, items: [], custom: true, addedBy: user, ...(body.source ? { source: String(body.source).slice(0, 300) } : {}) };
+    for (const it of items) {
+      const qty = Math.max(0.1, Math.min(10, Math.round((+it.qty || 1) * 100) / 100));
+      let key = it.key && catalog.products[it.key] ? it.key : null;
+      if (!key) {
+        const got = await ensureProduct(env, catalog, { productId: it.productId }, user);
+        if (got.error) continue;
+        key = got.key;
+      }
+      if (!meal.items.find(([k]) => k === key)) meal.items.push([key, qty]);
+    }
+    catalog[list].push(meal);
+    await putDoc(env, 'catalog', catalog);
+    return json({ catalog, id: meal.id });
   }
 
   // ---------- YNAB (read-only) ----------
@@ -549,6 +619,15 @@ async function ensureProduct(env, catalog, body, user) {
   applyKroger(catalog.products[key], k, true, user);
   return { key, label: k.description };
 }
+
+// Local development only: search the products we already have instead of calling King Soopers.
+function localSearch(catalog, term) {
+  const words = term.split(' ').filter(w => w.length > 2);
+  return Object.values(catalog.products).filter(p => p.kroger && words.some(w => p.kroger.description.toLowerCase().includes(w))).map(p => p.kroger).slice(0, 8);
+}
+
+// What the review screen needs to show a product.
+function pick(k) { return { productId: k.productId, description: k.description, size: k.size, price: currentPrice(k), image: k.image }; }
 
 function aisleFor(k) {
   const c = (k.categories || []).join(' ').toLowerCase();
