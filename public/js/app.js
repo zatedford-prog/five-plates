@@ -1,6 +1,6 @@
 import {
   SPECIAL, upcomingDates, dayInfo, rangeLabel, isoDate, itemsCost, tier, byId,
-  normalizeHousehold, fillDinners, fillEveryday, tally, slotKey, SLOTS, sharedWith, suggestPlan, buildList, totals, listAsText
+  plannedCost, normalizeHousehold, fillDinners, fillEveryday, tally, slotKey, SLOTS, sharedWith, suggestPlan, buildList, totals, listAsText
 } from './logic.js';
 
 // ---------- App state ----------
@@ -74,10 +74,20 @@ function markHousehold() {
   app.household.updatedAt = Date.now();
   saveCache(); setSync('saving'); flushSoon();
 }
-function setDinner(date, id) {
-  app.dinners.days[date] = id;
-  app.dirty.days[date] = true;
+// Saves one plan entry. An empty value removes it.
+function setDinner(key, value) {
+  if (value === '') delete app.dinners.days[key]; else app.dinners.days[key] = value;
+  app.dirty.days[key] = true;
   saveCache(); setSync('saving'); flushSoon();
+}
+// A person picked this meal, so Suggest must leave it alone from now on.
+function pickMeal(key, id) {
+  setDinner(key, id);
+  if (app.dinners.days['a:' + key]) setDinner('a:' + key, '');
+}
+function slotMeta(key) {
+  const days = app.dinners.days;
+  return { scale: +(days['s:' + key] || 1), have: (days['h:' + key] || '').split(',').filter(Boolean) };
 }
 function flushSoon() { clearTimeout(flushTimer); flushTimer = setTimeout(flush, 700); }
 async function flush() {
@@ -95,7 +105,7 @@ async function flush() {
     }
     if (app.dirty.household) {
       const h = app.household;
-      const res = await api('/api/household', { method: 'PUT', body: { bf: h.bf, ln: h.ln, sn: h.sn, hh: h.hh || {}, on: h.on, sentAt: h.sentAt || 0 } });
+      const res = await api('/api/household', { method: 'PUT', body: { bf: h.bf, ln: h.ln, sn: h.sn, hh: h.hh || {}, extra: h.extra || {}, on: h.on, sentAt: h.sentAt || 0 } });
       if (res.status === 401) { signOutLocal(); return; }
       if (res.status !== 200) return fail();
       h.updatedAt = res.data.updatedAt;
@@ -287,7 +297,9 @@ function upcoming() {
   const save = (filled, plan, slot) => filled.forEach(key => {
     const date = key.replace(/^[bl]:/, '');
     days[key] = plan[dates.indexOf(date)];
+    days['a:' + key] = '1'; // filled in automatically
     app.dirty.days[key] = true;
+    app.dirty.days['a:' + key] = true;
   });
   save(d.filled.map(x => slotKey('d', x)), d.plan, 'd');
   save(b.filled, b.plan, 'b');
@@ -301,7 +313,12 @@ function slotList(slot) { return slot === 'b' ? app.catalog.breakfasts : slot ==
 function week() {
   const h = app.household, u = upcoming();
   if (!h.hh) h.hh = {};
-  return { plan: u.plan, bf: tally(u.bplan), ln: tally(u.lplan), sn: h.sn, hh: h.hh, on: h.on, sentAt: h.sentAt };
+  const meals = [];
+  u.dates.forEach((date, i) => [['b', 'breakfasts'], ['l', 'lunches'], ['d', 'dinners']].forEach(([slot, list]) => {
+    const key = slotKey(slot, date);
+    meals.push({ list, id: slotPlan(u, slot)[i], ...slotMeta(key) });
+  }));
+  return { plan: u.plan, meals, bf: tally(u.bplan), ln: tally(u.lplan), sn: h.sn, hh: h.hh, extra: h.extra || {}, on: h.on, sentAt: h.sentAt };
 }
 function dayLabel(i) { const u = upcoming(); return dayInfo(u.dates[i], u.today); }
 function renderAll() {
@@ -344,6 +361,8 @@ function ynabLine(planTotal) {
     '</button>';
 }
 
+const SCALE_LABEL = { 0.5: '½ batch', 1: 'Normal', 1.5: '1½ batches', 2: 'Double' };
+
 // ---------- Header meter ----------
 function renderMeter() {
   const c = app.catalog, t = totals(buildList(c, week()));
@@ -380,10 +399,12 @@ function renderWeek() {
       const id = slotPlan(u, slot)[i], m = lists[slot][id];
       let name, meta;
       if (m) {
-        const cost = itemsCost(m.items, P);
+        const sm = slotMeta(slotKey(slot, date)), cost = plannedCost(m, P, sm.scale, sm.have);
         dayCost += cost;
         name = m.name;
-        meta = '<span class="num">' + money(cost) + '</span>';
+        meta = '<span class="num">' + money(cost) + '</span>' +
+          (sm.scale !== 1 ? '<span class="chip mid">' + SCALE_LABEL[sm.scale] + '</span>' : '') +
+          (sm.have.length ? '<span class="chip cheap">Have ' + sm.have.length + ' item' + (sm.have.length > 1 ? 's' : '') + '</span>' : '');
         if (slot === 'd') {
           const [tc, tl] = tier(cost), sh = sharedWith(c, u.plan, i, id);
           meta += '<span class="chip ' + tc + '">' + tl + '</span>' + (m.idea ? '<span class="chip idea">New idea</span>' : '') +
@@ -451,7 +472,7 @@ function itemRow(r) {
 function renderList() {
   const c = app.catalog, rows = buildList(c, week()), t = totals(rows);
   const unchecked = rows.filter(r => r.on && r.product.dyeRisk && !r.product.dyeChecked).length;
-  let h = '<div class="list-summary"><div><div class="eyebrow">For pickup</div><div class="big num">' + money(t.total) + '</div><small>' + t.count + ' items · whole packages, combined across meals</small></div></div>';
+  let h = '<button class="addrow boxed" type="button" data-extra="1">' + ICON.plus + 'Add an item to this week’s list</button><div class="list-summary"><div><div class="eyebrow">For pickup</div><div class="big num">' + money(t.total) + '</div><small>' + t.count + ' items · whole packages, combined across meals</small></div></div>';
   const swaps = rows.filter(r => r.on && r.product.swap);
   if (swaps.length) {
     const save = swaps.reduce((s, r) => s + r.cost * r.product.swap.savingsPct / 100, 0);
@@ -477,7 +498,7 @@ function renderList() {
 function renderMeals() {
   const c = app.catalog;
   const list = c.dinners.slice().sort((a, b) => itemsCost(a.items, c.products) - itemsCost(b.items, c.products));
-  let h = '<p class="lib-note">Cheapest first. Every meal is sized for your family: two adults and three kids eat about ' + c.settings.adultPortions + ' adult portions.</p>';
+  let h = '<button class="addrow boxed" type="button" data-newmeal="d">' + ICON.plus + 'Create a new dinner</button><p class="lib-note">Cheapest first. Every meal is sized for your family: two adults and three kids eat about ' + c.settings.adultPortions + ' adult portions.</p>';
   list.forEach(m => {
     const cost = itemsCost(m.items, c.products), [tc, tl] = tier(cost);
     h += '<button class="lib" type="button" data-meal="' + m.id + '"><span style="min-width:0"><span class="meal-name">' + esc(m.name) + '</span><span class="meal-meta"><span class="chip ' + tc + '">' + tl + '</span>' + (m.idea ? '<span class="chip idea">New idea</span>' : '') + (m.takeout ? '<span>vs ' + whole(m.takeout) + ' takeout</span>' : '') + '</span></span>' +
@@ -516,19 +537,27 @@ function useText(q, p) {
   return frac(q) + (q < 1 ? ' of ' : ' × ') + (p.size || 'pack');
 }
 
+const LIST_OF = { b: 'breakfasts', l: 'lunches', d: 'dinners' };
+
+// The meal card. Opened from a day (dayIdx set) it also has batch size and "Have it" ticks for that day.
 function mealSheet(id, dayIdx, slot = 'd') {
   const c = app.catalog, P = c.products, m = byId(slotList(slot))[id];
   if (!m) { swapSheet(dayIdx, slot); return; }
-  const what = SLOTS[slot];
-  const cost = itemsCost(m.items, P), portions = c.settings.adultPortions;
-  const bought = m.items.filter(([k]) => !P[k].pantry).reduce((t, [k, q]) => t + Math.ceil(q - .02) * P[k].price, 0);
+  const what = SLOTS[slot], planned = dayIdx != null;
+  const key = planned ? slotKey(slot, upcoming().dates[dayIdx]) : null;
+  const sm = planned ? slotMeta(key) : { scale: 1, have: [] };
+  const cost = plannedCost(m, P, sm.scale, sm.have), full = plannedCost(m, P, sm.scale, []), portions = c.settings.adultPortions;
   const days = upcoming().dates.map(d => dayInfo(d, upcoming().today));
-  const head = '<div class="eyebrow">' + (dayIdx != null ? days[dayIdx].dow + ' ' + days[dayIdx].month + ' ' + days[dayIdx].date : 'Meal card') + '</div><h2 id="sheetTitle">' + esc(m.name) + '</h2>';
+  const head = '<div class="eyebrow">' + (planned ? days[dayIdx].dow + ' ' + days[dayIdx].month + ' ' + days[dayIdx].date + ' · ' + what : 'Meal card') + '</div><h2 id="sheetTitle">' + esc(m.name) + '</h2>';
   let b = '<div class="stats">' +
-    '<div class="stat"><b class="num">' + money(cost) + '</b><small>True cost of this ' + what + '</small></div>' +
-    '<div class="stat"><b class="num">' + money(cost / portions) + '</b><small>Per adult portion</small></div>' +
-    '<div class="stat"><b>All 5</b><small>About ' + portions + ' adult portions</small></div></div>';
-  if (m.takeout) {
+    '<div class="stat"><b class="num">' + money(cost) + '</b><small>' + (sm.have.length ? 'To buy for this ' + what : 'True cost of this ' + what) + '</small></div>' +
+    '<div class="stat"><b class="num">' + money(full / (portions * sm.scale)) + '</b><small>Per adult portion</small></div>' +
+    '<div class="stat"><b>' + (sm.scale === 1 ? 'All 5' : SCALE_LABEL[sm.scale]) + '</b><small>About ' + Math.round(portions * sm.scale * 10) / 10 + ' adult portions</small></div></div>';
+  if (planned) {
+    b += '<div class="field"><label>How much to make</label><div class="chips">' +
+      [0.5, 1, 1.5, 2].map(s => '<button type="button" class="pick' + (sm.scale === s ? ' on' : '') + '" data-scale="' + s + '" data-key="' + key + '">' + SCALE_LABEL[s] + '</button>').join('') + '</div></div>';
+  }
+  if (m.takeout && !sm.have.length && sm.scale === 1) {
     const max = Math.max(m.takeout, cost);
     b += '<div class="vs"><div class="vs-row"><span>Made at home</span><span class="vs-bar"><span style="width:' + (cost / max * 100) + '%;background:var(--accent)"></span></span><b class="num">' + whole(cost) + '</b></div>' +
       '<div class="vs-row"><span>' + esc(m.takeoutName || 'Takeout') + '</span><span class="vs-bar"><span style="width:' + (m.takeout / max * 100) + '%;background:var(--butter)"></span></span><b class="num">' + whole(m.takeout) + '</b></div>' +
@@ -536,15 +565,133 @@ function mealSheet(id, dayIdx, slot = 'd') {
   }
   if (m.dyeTip) b += '<div class="tip dye">' + ICON.drop + '<span>' + esc(m.dyeTip) + '</span></div>';
   if (m.good) b += '<div class="tip good">' + ICON.leaf + '<span>' + esc(m.good) + '</span></div>';
-  b += '<div><h3 style="margin-bottom:4px">What goes into it</h3>';
+  b += '<div><h3 style="margin-bottom:4px">What goes into it</h3>' +
+    (planned ? '<p class="why" style="margin:0 0 4px">Tick <b>Have it</b> for anything already in the fridge or pantry. It comes off this week\'s list.</p>' : '');
+  if (!m.items.length) b += '<p class="why">No ingredients yet. Add them below so the list knows what to buy.</p>';
   m.items.forEach(([k, q]) => {
     const p = P[k];
     if (!p) return;
-    b += '<div class="ing"><span><button type="button" class="ing-name" data-product="' + k + '">' + esc(displayName(p)) + '</button>' + (p.pantry ? ' <span class="pantry-tag">pantry</span>' : '') + '<small>' + esc(useText(q, p)) + ' ' + saleChip(p) + dyeBadge(k, p) + '</small></span><b class="num">' + money(p.price * q) + '</b></div>';
+    const have = sm.have.includes(k);
+    b += '<div class="ing' + (have ? ' have' : '') + '">' +
+      (planned ? '<button type="button" class="havebox" data-have="' + k + '" data-key="' + key + '" aria-pressed="' + have + '" aria-label="Have ' + esc(displayName(p)) + '">' + ICON.check + '</button>' : '') +
+      '<span><button type="button" class="ing-name" data-product="' + k + '">' + esc(displayName(p)) + '</button>' + (p.pantry ? ' <span class="pantry-tag">pantry</span>' : '') +
+      '<small>' + esc(useText(q * sm.scale, p)) + (have ? ' · have it' : '') + ' ' + saleChip(p) + dyeBadge(k, p) + '</small></span>' +
+      '<span class="ing-right"><b class="num">' + (have ? '$0' : money(p.price * q * sm.scale)) + '</b>' +
+      '<button type="button" class="x small" data-dropitem="' + k + '" data-meal="' + m.id + '" data-list="' + LIST_OF[slot] + '" aria-label="Remove ' + esc(displayName(p)) + ' from this meal">' + ICON.close + '</button></span></div>';
   });
-  b += '</div><p class="why">True cost counts only what this meal uses. Bought just for this ' + what + ', the receipt would be about ' + whole(bought) + '. The rest carries into other meals.</p>';
-  if (dayIdx != null) b += '<button class="cta ghost" type="button" data-swap="' + dayIdx + '" data-slot="' + slot + '">' + ICON.swap + 'Swap this ' + what + '</button>';
+  b += '</div><button class="addrow" type="button" data-additem="' + m.id + '" data-list="' + LIST_OF[slot] + '"' + (planned ? ' data-day="' + dayIdx + '" data-slot="' + slot + '"' : '') + '>' + ICON.plus + 'Add an ingredient</button>';
+  b += '<p class="why">The × removes an ingredient from this meal for good, on every day it\'s planned. "Have it" only counts for this day.</p>';
+  if (planned) b += '<button class="cta ghost" type="button" data-swap="' + dayIdx + '" data-slot="' + slot + '">' + ICON.swap + 'Swap this ' + what + '</button>';
   openSheet(head, b);
+  app.reopen = () => mealSheet(id, dayIdx, slot);
+}
+
+// ---------- Editing meals ----------
+function itemSheet(list, mealId, back) {
+  const meal = app.catalog[list].find(x => x.id === mealId);
+  if (!meal) return;
+  const head = '<div class="eyebrow">' + esc(meal.name) + '</div><h2 id="sheetTitle">Add an ingredient</h2>';
+  const b = '<div class="field"><label>How much does this meal use?</label><div class="chips" id="qtyChips">' +
+      [[0.25, '¼ package'], [0.5, '½ package'], [1, '1 package'], [2, '2 packages']].map(([q, t]) => '<button type="button" class="pick' + (q === 1 ? ' on' : '') + '" data-qty="' + q + '">' + t + '</button>').join('') + '</div></div>' +
+    '<div class="field"><label for="itemSearch">Find it at King Soopers</label><input id="itemSearch" type="search" placeholder="Search King Soopers" autocomplete="off"></div>' +
+    '<div class="opts" id="itemResults"></div>';
+  openSheet(head, b);
+  const qty = () => { const on = document.querySelector('#qtyChips .pick.on'); return on ? +on.dataset.qty : 1; };
+  const input = $('itemSearch');
+  let timer;
+  const search = () => searchInto('itemResults', input.value, 'itempick');
+  input.oninput = () => { clearTimeout(timer); timer = setTimeout(search, 400); };
+  input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); search(); } };
+  $('itemResults').onclick = async e => {
+    const btn = e.target.closest('[data-itempick]');
+    if (!btn) return;
+    btn.disabled = true;
+    const res = await saveItem(list, mealId, { productId: btn.dataset.itempick, qty: qty() });
+    if (res) { toast('Added to ' + meal.name); back ? back() : closeSheet(); }
+    else btn.disabled = false;
+  };
+  setTimeout(() => input.focus(), 300);
+}
+
+async function saveItem(list, mealId, body) {
+  let res;
+  try { res = await api('/api/meals/' + list + '/' + mealId + '/items', { method: 'PUT', body }); }
+  catch { toast('You\'re offline. Try again when you have signal.'); return null; }
+  if (res.status === 401) { signOutLocal(); return null; }
+  if (res.status !== 200) { toast(res.data?.error || 'That didn\'t save. Try again.'); return null; }
+  app.catalog = res.data.catalog;
+  saveCache();
+  renderAll();
+  return res.data;
+}
+
+// Shared King Soopers search results (used for meal ingredients and one-off list items).
+async function searchInto(boxId, q, attr) {
+  const box = $(boxId);
+  if (!box) return;
+  if (q.trim().length < 3) { box.innerHTML = ''; return; }
+  box.innerHTML = '<p class="hint">Searching…</p>';
+  let res;
+  try { res = await api('/api/kroger/search?q=' + encodeURIComponent(q.trim())); }
+  catch { box.innerHTML = '<p class="hint">You\'re offline. Try again when you have signal.</p>'; return; }
+  if (res.status !== 200) { box.innerHTML = '<p class="hint">' + esc(res.data?.error || 'Search didn\'t work. Try again.') + '</p>'; return; }
+  box.innerHTML = res.data.results.length ? res.data.results.map(r =>
+    '<button class="opt kopt" type="button" data-' + attr + '="' + r.productId + '">' +
+    (r.image ? '<img src="' + esc(r.image) + '" alt="" width="44" height="44" loading="lazy">' : '<span></span>') +
+    '<span style="min-width:0"><span class="meal-name">' + esc(r.description) + '</span><span class="meal-meta">' + esc(r.size) +
+    (r.promo > 0 && r.promo < r.regular ? '<span class="chip sale">Sale</span>' : '') + '</span></span>' +
+    '<span class="opt-cost num">' + money(r.promo > 0 && r.promo < r.regular ? r.promo : r.regular) + '</span></button>').join('')
+    : '<p class="hint">Nothing found. Try fewer or different words.</p>';
+}
+
+// A brand-new meal. It goes straight onto the day it was created from, then asks for ingredients.
+function newMealSheet(slot, dayIdx) {
+  const what = SLOTS[slot];
+  openSheet('<div class="eyebrow">New ' + what + '</div><h2 id="sheetTitle">Create a ' + what + '</h2>',
+    '<div class="field"><label for="mealName">What do you call it?</label><input id="mealName" type="text" placeholder="' + (slot === 'd' ? 'Chicken enchiladas' : slot === 'b' ? 'Yogurt parfaits' : 'Ham & cheese roll-ups') + '" autocomplete="off"></div>' +
+    '<button class="cta" type="button" id="mealCreate">' + ICON.plus + 'Create and add ingredients</button>' +
+    '<p class="why">It\'s added to ' + (dayIdx != null ? 'this day' : 'your meals') + ' and saved for next time.</p>');
+  setTimeout(() => $('mealName').focus(), 300);
+  $('mealCreate').onclick = async () => {
+    const name = $('mealName').value.trim();
+    if (!name) { $('mealName').focus(); return; }
+    let res;
+    try { res = await api('/api/meals', { method: 'POST', body: { list: LIST_OF[slot], name } }); }
+    catch { toast('You\'re offline. Try again when you have signal.'); return; }
+    if (res.status !== 200) { toast(res.data?.error || 'That didn\'t save. Try again.'); return; }
+    app.catalog = res.data.catalog;
+    saveCache();
+    if (dayIdx != null) pickMeal(slotKey(slot, upcoming().dates[dayIdx]), res.data.id);
+    renderAll();
+    itemSheet(LIST_OF[slot], res.data.id, () => mealSheet(res.data.id, dayIdx, slot));
+  };
+}
+
+// One-off things for this week's list (birthday cake mix, a specific brand, etc.).
+function extraSheet() {
+  openSheet('<div class="eyebrow">This week\'s list</div><h2 id="sheetTitle">Add an item</h2>',
+    '<p class="why">For one-off things that aren\'t part of a meal. It stays on the list until you send it to the cart or remove it.</p>' +
+    '<div class="field"><label for="extraSearch">Find it at King Soopers</label><input id="extraSearch" type="search" placeholder="Search King Soopers" autocomplete="off"></div>' +
+    '<div class="opts" id="extraResults"></div>');
+  const input = $('extraSearch');
+  let timer;
+  const search = () => searchInto('extraResults', input.value, 'extrapick');
+  input.oninput = () => { clearTimeout(timer); timer = setTimeout(search, 400); };
+  input.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); clearTimeout(timer); search(); } };
+  $('extraResults').onclick = async e => {
+    const btn = e.target.closest('[data-extrapick]');
+    if (!btn) return;
+    btn.disabled = true;
+    let res;
+    try { res = await api('/api/everyday', { method: 'POST', body: { kind: 'extra', productId: btn.dataset.extrapick } }); }
+    catch { toast('You\'re offline. Try again when you have signal.'); btn.disabled = false; return; }
+    if (res.status !== 200) { toast(res.data?.error || 'That didn\'t save. Try again.'); btn.disabled = false; return; }
+    app.catalog = res.data.catalog;
+    app.household.extra = { ...(app.household.extra || {}), ...(res.data.household.extra || {}) };
+    saveCache(); renderAll(); closeSheet();
+    toast('Added to this week\'s list');
+  };
+  setTimeout(() => input.focus(), 300);
 }
 
 function swapSheet(dayIdx, slot = 'd') {
@@ -567,7 +714,7 @@ function swapSheet(dayIdx, slot = 'd') {
       (used ? '<span>' + (slot === 'd' ? 'Already this week' : used + ' other day' + (used > 1 ? 's' : '')) + '</span>' : '') + '</span></span><span class="opt-cost num">' + money(cost) + '</span></button>';
   });
   b += '</div>';
-  if (slot !== 'd') b += '<button class="addrow" type="button" data-add="' + what + '">' + ICON.plus + 'Add a new ' + what + '</button>';
+  b = b.replace('<h3>Or pick a ' + what + '</h3>', '<button class="addrow boxed" type="button" data-newmeal="' + slot + '" data-day="' + dayIdx + '">' + ICON.plus + 'Create a new ' + what + '</button><h3>Or pick a ' + what + '</h3>');
   openSheet(head, b);
 }
 
@@ -629,6 +776,7 @@ function productSheet(key) {
     return;
   }
   let b = '';
+  if (app.household.extra && app.household.extra[key]) b += '<button class="cta ghost" type="button" data-dropextra="' + key + '">Remove from this week’s list</button>';
   if (k) {
     b += '<div class="kp">' + (k.image ? '<img src="' + esc(k.image) + '" alt="" width="88" height="88" loading="lazy">' : '') +
       '<div><div class="kp-price num">' + (onSale(p) ? money(k.promo) + ' <s>' + money(k.regular) + '</s>' : money(k.regular)) + '</div>' +
@@ -830,6 +978,7 @@ function sendSheet() {
     if (res.status === 409) { app.kroger = { connected: false }; saveCache(); sendSheet(); return; }
     if (res.status !== 200) { btn.disabled = false; btn.textContent = 'Try again'; toast(res.data?.error || 'That didn’t go through. Try again.'); return; }
     app.household.sentAt = Date.now();
+    app.household.extra = {};
     markHousehold();
     sentSheet(res.data);
   };
@@ -859,31 +1008,69 @@ function copySheet() {
   };
 }
 
+// Fills or reshuffles only the meals the app picked; anything a person chose stays put. Undo puts it all back.
 function suggest() {
-  const c = app.catalog, u = upcoming(), plan = suggestPlan(c), seed = String(Date.now());
+  const c = app.catalog, u = upcoming(), days = app.dinners.days, seed = String(Date.now());
+  const isAuto = key => !days[key] || days['a:' + key] === '1';
+  const before = {};
+  const dinners = suggestPlan(c, () => Math.random());
   const b = fillEveryday(c.breakfasts, app.household.bf, {}, u.dates, 'b', seed);
   const l = fillEveryday(c.lunches, app.household.ln, {}, u.dates, 'l', seed);
-  u.dates.forEach((d, i) => { setDinner(d, plan[i]); setDinner(slotKey('b', d), b.plan[i]); setDinner(slotKey('l', d), l.plan[i]); });
+  let changed = 0;
+  u.dates.forEach((d, i) => [['d', dinners[i]], ['b', b.plan[i]], ['l', l.plan[i]]].forEach(([slot, id]) => {
+    const key = slotKey(slot, d);
+    if (!isAuto(key) || !id) return;
+    before[key] = days[key] || '';
+    setDinner(key, id);
+    setDinner('a:' + key, '1');
+    changed++;
+  }));
   renderAll();
-  toast('New 7 days suggested');
+  if (!changed) { toast('Everything is already picked. Swap a meal to change it.'); return; }
+  toast('Suggested ' + changed + ' meals. Your picks stayed.', 'Undo', () => {
+    for (const [key, id] of Object.entries(before)) setDinner(key, id);
+    renderAll();
+    toast('Put back');
+  });
 }
 
-function toast(msg) {
+function toast(msg, actionLabel, action) {
   const t = $('toast');
   if (!t) return;
-  t.textContent = msg;
+  t.innerHTML = esc(msg) + (actionLabel ? ' <button type="button" class="toast-btn">' + esc(actionLabel) + '</button>' : '');
+  t.classList.toggle('has-action', !!actionLabel);
+  if (actionLabel) t.querySelector('.toast-btn').onclick = () => { t.classList.remove('show'); action(); };
   t.classList.add('show');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove('show'), 1800);
+  toast.timer = setTimeout(() => t.classList.remove('show'), actionLabel ? 6000 : 1800);
 }
 
 // ---------- Events ----------
 document.addEventListener('click', e => {
-  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide],[data-product],[data-choose],[data-confirm],[data-add],[data-addsrc],[data-lasts],[data-ynab]');
+  const el = e.target.closest('[data-tab],[data-open],[data-swap],[data-pick],[data-item],[data-meal],[data-step],[data-dye],[data-dyeset],[data-hide],[data-product],[data-choose],[data-confirm],[data-add],[data-addsrc],[data-lasts],[data-ynab],[data-scale],[data-have],[data-dropitem],[data-additem],[data-newmeal],[data-qty],[data-extra],[data-dropextra]');
   if (!el || !app.catalog) return;
   const ds = el.dataset, w = week();
   if (ds.tab) setTab(ds.tab);
   else if (ds.ynab) ynabSheet();
+  else if (ds.qty) { document.querySelectorAll('#qtyChips .pick').forEach(b => b.classList.toggle('on', b === el)); }
+  else if (ds.scale) { setDinner('s:' + ds.key, ds.scale === '1' ? '' : ds.scale); renderAll(); app.reopen && app.reopen(); }
+  else if (ds.have) {
+    const have = slotMeta(ds.key).have, on = have.includes(ds.have);
+    const next = on ? have.filter(k => k !== ds.have) : [...have, ds.have];
+    setDinner('h:' + ds.key, next.join(','));
+    renderAll(); app.reopen && app.reopen();
+  }
+  else if (ds.dropitem) {
+    const p = app.catalog.products[ds.dropitem];
+    saveItem(ds.list, ds.meal, { key: ds.dropitem, qty: 0 }).then(r => { if (r) { toast('Removed ' + (p ? p.name : 'it')); app.reopen && app.reopen(); } });
+  }
+  else if (ds.additem) {
+    const day = ds.day != null ? +ds.day : null, slot = ds.slot || 'd', id = ds.additem;
+    itemSheet(ds.list, id, () => mealSheet(id, day, slot));
+  }
+  else if (ds.newmeal) newMealSheet(ds.newmeal, ds.day != null && ds.day !== '' ? +ds.day : null);
+  else if (ds.extra) extraSheet();
+  else if (ds.dropextra) { delete app.household.extra[ds.dropextra]; markHousehold(); renderAll(); closeSheet(); toast('Removed from the list'); }
   else if (ds.add) addSheet(ds.add);
   else if (ds.addsrc) addSheet(ds.kind, ds.addsrc);
   else if (ds.lasts) { document.querySelectorAll('#lastsChips .pick').forEach(b => b.classList.toggle('on', b === el)); }
@@ -907,7 +1094,7 @@ document.addEventListener('click', e => {
   else if (ds.swap != null) swapSheet(+ds.swap, ds.slot || 'd');
   else if (ds.pick) {
     const d = +ds.day, slot = ds.slot || 'd';
-    setDinner(slotKey(slot, upcoming().dates[d]), ds.pick);
+    pickMeal(slotKey(slot, upcoming().dates[d]), ds.pick);
     renderAll();
     closeSheet();
     const m = byId(slotList(slot))[ds.pick];

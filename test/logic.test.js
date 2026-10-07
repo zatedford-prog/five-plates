@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { SEED_CATALOG } from '../src/seed.js';
 import {
-  upcomingDates, dayInfo, rangeLabel, normalizeHousehold, fillDinners, fillEveryday, tally, slotKey, buildList, totals,
+  upcomingDates, dayInfo, rangeLabel, normalizeHousehold, fillDinners, fillEveryday, tally, slotKey, plannedCost, buildList, totals,
   seededRandom, suggestPlan, itemsCost, listAsText
 } from '../public/js/logic.js';
 
@@ -64,6 +64,23 @@ test('list combines meals and rounds up to whole packages', () => {
   assert.deepEqual(sausage.from.sort(), ['Pasta & sausage', 'Sweet potato, kale & sausage']);
   assert.equal(rows.find(r => r.key === 'onion').qty, 2);   // 1 + 0.5 rounds up
   assert.equal(rows.find(r => r.key === 'oil').on, false);  // pantry items start unchecked
+});
+
+test('half batches and "have it" items shrink the list; extras are added', () => {
+  const base = { ...view(), meals: [{ list: 'dinners', id: 'pastaSausage' }], bf: {}, ln: {}, sn: {}, hh: {}, extra: {} };
+  const cat = { ...catalog, settings: { ...catalog.settings, milkPerWeek: 0 } };
+  const full = buildList(cat, base);
+  assert.equal(full.find(r => r.key === 'itSausage').qty, 1);
+  const two = buildList(cat, { ...base, meals: [{ list: 'dinners', id: 'pastaSausage', scale: 2 }] });
+  assert.equal(two.find(r => r.key === 'itSausage').qty, 2);
+  const have = buildList(cat, { ...base, meals: [{ list: 'dinners', id: 'pastaSausage', have: ['itSausage', 'penne'] }] });
+  assert.equal(have.find(r => r.key === 'itSausage'), undefined);
+  assert.equal(have.find(r => r.key === 'penne'), undefined);
+  assert.ok(have.find(r => r.key === 'marinara'));
+  const extra = buildList(cat, { ...base, extra: { goldfish: 2 } });
+  assert.equal(extra.find(r => r.key === 'goldfish').qty, 2);
+  assert.ok(Math.abs(plannedCost(catalog.dinners.find(m => m.id === 'pastaSausage'), catalog.products, 0.5, ['itSausage']) -
+    plannedCost(catalog.dinners.find(m => m.id === 'pastaSausage'), catalog.products, 1, ['itSausage']) / 2) < 1e-9);
 });
 
 test('bucket split adds up to the total', () => {

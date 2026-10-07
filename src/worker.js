@@ -9,7 +9,8 @@ import {
 const COOKIE = 'fp_session';
 const SESSION_DAYS = 400; // the longest browsers allow, so phones stay signed in
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-const PLAN_KEY_RE = /^(?:[bl]:)?\d{4}-\d{2}-\d{2}$/; // dinner date, or breakfast/lunch as b:/l: + date
+const PLAN_KEY_RE = /^(?:[ash]:)?(?:[bl]:)?\d{4}-\d{2}-\d{2}$/; // see the /api/dinners route
+const MEAL_LISTS = { dinners: 'dinners', breakfasts: 'breakfasts', lunches: 'lunches' };
 const KEY_RE = /^[A-Za-z0-9_-]{1,40}$/;
 const PRODUCT_RE = /^\/api\/products\/([A-Za-z0-9_-]{1,40})$/;
 const MAX_BODY = 256 * 1024;
@@ -62,52 +63,35 @@ async function route(request, env, url) {
     return json({ updatedAt: h.updatedAt });
   }
 
-  // Dinner per date. Merges, so two phones changing different days don't overwrite each other.
+  // The plan. Keys: date (dinner), b:/l: + date (breakfast/lunch), plus per-meal notes on the same key:
+  // a: (filled in automatically, so Suggest may change it), s: (batch size), h: (ingredients already on hand).
+  // Merges, so two phones changing different meals don't overwrite each other. An empty value removes a key.
+  let m;
   if (pathname === '/api/dinners' && method === 'PUT') {
     const body = await readJson(request);
     const incoming = body && body.days && typeof body.days === 'object' ? Object.entries(body.days) : null;
-    if (!incoming || incoming.length > 60 || !incoming.every(([d, id]) => PLAN_KEY_RE.test(d) && typeof id === 'string' && id.length <= 40)) {
-      return json({ error: 'Invalid dinners' }, 400);
+    if (!incoming || incoming.length > 120 || !incoming.every(([d, v]) => PLAN_KEY_RE.test(d) && typeof v === 'string' && v.length <= 800)) {
+      return json({ error: 'Invalid plan' }, 400);
     }
     const doc = (await getDoc(env, 'dinners')) || { days: {} };
-    for (const [d, id] of incoming) doc.days[d] = id;
+    for (const [d, v] of incoming) { if (v === '') delete doc.days[d]; else doc.days[d] = v; }
     const cutoff = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
-    for (const d of Object.keys(doc.days)) if (d.replace(/^[bl]:/, '') < cutoff) delete doc.days[d];
+    for (const d of Object.keys(doc.days)) if (d.replace(/^(?:[ash]:)?(?:[bl]:)?/, '') < cutoff) delete doc.days[d];
     doc.updatedAt = Date.now();
     doc.updatedBy = user;
     await putDoc(env, 'dinners', doc);
     return json({ updatedAt: doc.updatedAt, days: doc.days });
   }
 
-  // Adds a King Soopers product as a new breakfast, lunch or snack.
+  // Adds a product as a new breakfast or lunch, a snack, a household item, or a one-off extra on the list.
   if (pathname === '/api/everyday' && method === 'POST') {
     const body = await readJson(request);
     const kind = body && body.kind;
-    if (!['breakfast', 'lunch', 'snack', 'household'].includes(kind)) return json({ error: 'Invalid item' }, 400);
+    if (!['breakfast', 'lunch', 'snack', 'household', 'extra'].includes(kind)) return json({ error: 'Invalid item' }, 400);
     const catalog = await getCatalog(env);
-    let key, label;
-    if (body.custom) {
-      // Something bought elsewhere (usually Costco): no King Soopers link, price typed in by the family.
-      const c = body.custom, price = Math.round((+c.price || 0) * 100) / 100;
-      const cname = String(c.name || '').trim().slice(0, 60);
-      if (!cname || !(price > 0 && price < 500)) return json({ error: 'Add a name and a price.' }, 400);
-      key = 'x' + Date.now().toString(36);
-      catalog.products[key] = { name: cname, size: String(c.size || '').trim().slice(0, 30), price, aisle: 'Costco', store: 'costco', dyeRisk: true, custom: true };
-      label = cname;
-    } else {
-      if (!/^\d{13}$/.test(String(body.productId))) return json({ error: 'Invalid item' }, 400);
-      const store = catalog.settings.krogerStore;
-      if (!store) return json({ error: 'Pick your King Soopers store first.' }, 409);
-      const [k] = await productsById(env, [body.productId], store.locationId);
-      if (!k) return json({ error: 'That product is not sold at your store.' }, 404);
-      key = 'k' + k.productId;
-      if (!catalog.products[key]) {
-        catalog.products[key] = { name: k.description, size: k.size, price: currentPrice(k), aisle: aisleFor(k), dyeRisk: true, custom: true };
-        applyKroger(catalog.products[key], k, true, user);
-      }
-      label = k.description;
-    }
-    if (!catalog.aisles.includes('Costco')) catalog.aisles.push('Costco');
+    const got = await ensureProduct(env, catalog, body, user);
+    if (got.error) return json({ error: got.error }, got.status);
+    const { key, label } = got;
     const name = String(body.name || label).trim().slice(0, 60) || label;
     const household = await getHousehold(env);
     let entryId = key;
@@ -119,6 +103,9 @@ async function route(request, env, url) {
     } else if (kind === 'snack') {
       if (!catalog.snacks.includes(key)) catalog.snacks.push(key);
       household.sn[key] = Math.max(1, household.sn[key] || 0);
+    } else if (kind === 'extra') {
+      household.extra = household.extra || {};
+      household.extra[key] = Math.max(1, Math.min(24, Math.round(+body.qty || 1)));
     } else {
       const lasts = Math.max(1, Math.min(14, Math.round(+body.lasts || 3)));
       const list = kind === 'breakfast' ? catalog.breakfasts : catalog.lunches;
@@ -131,7 +118,52 @@ async function route(request, env, url) {
     return json({ catalog, household, entryId });
   }
 
-  let m;
+  // Creates a new meal (dinner, breakfast or lunch). Ingredients are added with the route below.
+  if (pathname === '/api/meals' && method === 'POST') {
+    const body = await readJson(request);
+    const list = MEAL_LISTS[body && body.list];
+    const name = String((body && body.name) || '').trim().slice(0, 60);
+    if (!list || !name) return json({ error: 'Give the meal a name.' }, 400);
+    const catalog = await getCatalog(env);
+    const id = 'm' + Date.now().toString(36);
+    catalog[list].push({ id, name, items: [], custom: true, addedBy: user });
+    await putDoc(env, 'catalog', catalog);
+    return json({ catalog, id });
+  }
+
+  // Adds, changes or removes one ingredient on a meal. qty is in packages (0.5 = half a package); 0 removes it.
+  m = pathname.match(/^\/api\/meals\/(dinners|breakfasts|lunches)\/([A-Za-z0-9_-]{1,40})\/items$/);
+  if (m && method === 'PUT') {
+    const body = await readJson(request);
+    const catalog = await getCatalog(env);
+    const meal = catalog[m[1]].find(x => x.id === m[2]);
+    if (!meal || !body) return json({ error: 'Unknown meal' }, 404);
+    let key = body.key;
+    if (!key) {
+      const got = await ensureProduct(env, catalog, body, user);
+      if (got.error) return json({ error: got.error }, got.status);
+      key = got.key;
+    }
+    if (!catalog.products[key]) return json({ error: 'Unknown product' }, 404);
+    const qty = Math.max(0, Math.min(10, Math.round((+body.qty || 0) * 100) / 100));
+    meal.items = meal.items.filter(([k]) => k !== key);
+    if (qty > 0) meal.items.push([key, qty]);
+    await putDoc(env, 'catalog', catalog);
+    return json({ catalog });
+  }
+
+  m = pathname.match(/^\/api\/meals\/(dinners|breakfasts|lunches)\/([A-Za-z0-9_-]{1,40})$/);
+  if (m && method === 'PATCH') {
+    const body = await readJson(request);
+    const catalog = await getCatalog(env);
+    const meal = catalog[m[1]].find(x => x.id === m[2]);
+    const name = String((body && body.name) || '').trim().slice(0, 60);
+    if (!meal || !name) return json({ error: 'Unknown meal' }, 404);
+    meal.name = name;
+    await putDoc(env, 'catalog', catalog);
+    return json({ catalog });
+  }
+
   m = pathname.match(PRODUCT_RE);
   if (m && method === 'PATCH') {
     const body = await readJson(request);
@@ -494,6 +526,30 @@ async function getHousehold(env) {
   return migrated;
 }
 
+async function ensureProduct(env, catalog, body, user) {
+  if (body.custom) {
+    // Something bought elsewhere (usually Costco): no King Soopers link, price typed in by the family.
+    const c = body.custom, price = Math.round((+c.price || 0) * 100) / 100;
+    const cname = String(c.name || '').trim().slice(0, 60);
+    if (!cname || !(price > 0 && price < 500)) return { error: 'Add a name and a price.', status: 400 };
+    const key = 'x' + Date.now().toString(36);
+    catalog.products[key] = { name: cname, size: String(c.size || '').trim().slice(0, 30), price, aisle: 'Costco', store: 'costco', dyeRisk: true, custom: true };
+    if (!catalog.aisles.includes('Costco')) catalog.aisles.push('Costco');
+    return { key, label: cname };
+  }
+  if (!/^\d{13}$/.test(String(body.productId))) return { error: 'Invalid item', status: 400 };
+  const store = catalog.settings.krogerStore;
+  if (!store) return { error: 'Pick your King Soopers store first.', status: 409 };
+  const existing = Object.entries(catalog.products).find(([, p]) => p.kroger && p.kroger.productId === String(body.productId));
+  if (existing) return { key: existing[0], label: existing[1].kroger.description };
+  const [k] = await productsById(env, [body.productId], store.locationId);
+  if (!k) return { error: 'That product is not sold at your store.', status: 404 };
+  const key = 'k' + k.productId;
+  catalog.products[key] = { name: k.description, size: k.size, price: currentPrice(k), aisle: aisleFor(k), dyeRisk: true, custom: true };
+  applyKroger(catalog.products[key], k, true, user);
+  return { key, label: k.description };
+}
+
 function aisleFor(k) {
   const c = (k.categories || []).join(' ').toLowerCase();
   if (/produce/.test(c)) return 'Produce';
@@ -521,13 +577,13 @@ function cleanHousehold(h) {
     }
     return out;
   };
-  const bf = counts(h.bf), ln = counts(h.ln), sn = counts(h.sn), hh = counts(h.hh || {}), on = {};
-  if (!bf || !ln || !sn || !hh) return null;
+  const bf = counts(h.bf), ln = counts(h.ln), sn = counts(h.sn), hh = counts(h.hh || {}), extra = counts(h.extra || {}), on = {};
+  if (!bf || !ln || !sn || !hh || !extra) return null;
   for (const [k, v] of Object.entries(h.on || {})) {
     if (!KEY_RE.test(k)) return null;
     on[k] = !!v;
   }
-  return { bf, ln, sn, hh, on, sentAt: Math.max(0, +h.sentAt || 0) };
+  return { bf, ln, sn, hh, extra, on, sentAt: Math.max(0, +h.sentAt || 0) };
 }
 
 function json(data, status = 200, headers = {}) {

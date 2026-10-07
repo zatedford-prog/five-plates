@@ -30,7 +30,11 @@ Zach (Android) is the builder. Both use it as an installed home-screen app.
   - `catalog`: products (each optionally linked to an exact King Soopers product under `kroger`),
     dinners, breakfasts, lunches, snacks, household items, settings (store, YNAB category ids).
   - `dinners`: the plan, `days` keyed by date (dinner), `b:` + date (breakfast), `l:` + date (lunch).
-  - `household`: weekly shelf counts (`sn` snacks & drinks, `hh` household), list check-offs, `sentAt`.
+    Per-meal notes use a prefix on that key: `a:` = filled in automatically (Suggest may change it;
+    anything without it was picked by a person and Suggest must never touch it), `s:` = batch size
+    (0.5 / 1.5 / 2), `h:` = comma list of product keys already on hand (left off the list).
+  - `household`: weekly shelf counts (`sn` snacks & drinks, `hh` household), one-off `extra` list items
+    (cleared after a cart send), list check-offs, `sentAt`.
   - `kroger:user`: Jamie's linked King Soopers cart tokens.
 - The plan always shows today plus the next 6 days. Empty slots fill with the same suggestion on every
   phone (seeded by date).

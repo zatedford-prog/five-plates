@@ -1,6 +1,7 @@
 // Pure planning logic shared by the app and the tests. No DOM, no network.
 
 export const BUCKETS = ['dinner', 'breakfast', 'lunch', 'snack', 'household'];
+const SLOT_LABEL = { breakfast: 'Breakfast', lunch: 'Lunch' };
 // Days with no cooking to shop for. Nothing from these goes on the list.
 export const SPECIAL = {
   out: { name: 'Eating out', sub: 'Comes from the eating-out money', short: 'Eating out' },
@@ -44,6 +45,10 @@ export function rangeLabel(dates) {
 export function itemsCost(items, products) {
   return items.reduce((t, [k, q]) => t + (products[k] ? products[k].price * q : 0), 0);
 }
+// Cost of one planned meal: scaled for batch size, leaving out ingredients already on hand.
+export function plannedCost(meal, products, scale = 1, have = []) {
+  return meal.items.reduce((t, [k, q]) => t + (products[k] && !have.includes(k) ? products[k].price * q * scale : 0), 0);
+}
 export function tier(cost) {
   return cost < 16 ? ['cheap', 'Easy on budget'] : cost < 25 ? ['mid', 'Middle'] : ['treat', 'Treat'];
 }
@@ -63,6 +68,7 @@ export function normalizeHousehold(catalog, h) {
     ln: ints(src.ln, d.ln),
     sn: ints(src.sn, d.sn),
     hh: ints(src.hh, d.hh || {}),
+    extra: ints(src.extra, {}),
     on: src.on && typeof src.on === 'object' ? Object.fromEntries(Object.entries(src.on).map(([k, v]) => [k, !!v])) : {},
     sentAt: +src.sentAt || 0,
     updatedAt: +src.updatedAt || 0
@@ -177,12 +183,23 @@ export function buildList(catalog, week) {
     n[bucket] += q;
     (from[k] = from[k] || new Set()).add(label);
   };
-  week.plan.forEach(id => { const m = dinners[id]; if (m) m.items.forEach(([k, q]) => add(k, q, 'dinner', m.name)); });
-  catalog.breakfasts.forEach(b => { const d = week.bf[b.id] || 0; b.items.forEach(([k, q]) => add(k, q * d, 'breakfast', 'Breakfast')); });
+  if (week.meals) {
+    // Each planned meal on its own: batch size, and skip what's already in the fridge.
+    const lists = { dinners: [dinners, 'dinner'], breakfasts: [byId(catalog.breakfasts), 'breakfast'], lunches: [byId(catalog.lunches), 'lunch'] };
+    week.meals.forEach(({ list, id, scale = 1, have = [] }) => {
+      const [index, bucket] = lists[list];
+      const m = index[id];
+      if (m) m.items.forEach(([k, q]) => { if (!have.includes(k)) add(k, q * scale, bucket, bucket === 'dinner' ? m.name : SLOT_LABEL[bucket]); });
+    });
+  } else {
+    week.plan.forEach(id => { const m = dinners[id]; if (m) m.items.forEach(([k, q]) => add(k, q, 'dinner', m.name)); });
+    catalog.breakfasts.forEach(b => { const d = week.bf[b.id] || 0; b.items.forEach(([k, q]) => add(k, q * d, 'breakfast', 'Breakfast')); });
+  }
   if (catalog.settings.milkPerWeek) add('milk', catalog.settings.milkPerWeek, 'breakfast', 'Breakfast');
-  catalog.lunches.forEach(l => { const d = week.ln[l.id] || 0; l.items.forEach(([k, q]) => add(k, q * d, 'lunch', 'Lunch')); });
+  if (!week.meals) catalog.lunches.forEach(l => { const d = week.ln[l.id] || 0; l.items.forEach(([k, q]) => add(k, q * d, 'lunch', 'Lunch')); });
   catalog.snacks.forEach(k => add(k, week.sn[k] || 0, 'snack', 'Snacks & drinks'));
   (catalog.household || []).forEach(k => add(k, (week.hh || {})[k] || 0, 'household', 'Household & coffee'));
+  Object.entries(week.extra || {}).forEach(([k, q]) => add(k, q, 'household', 'Extra item'));
   return Object.keys(need).map(k => {
     const p = P[k], n = need[k];
     const sum = BUCKETS.reduce((s, b) => s + n[b], 0);

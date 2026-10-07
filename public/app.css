@@ -400,3 +400,19 @@ button.erow-name { display: block; font-weight: 700; font-size: 14.5px; }
 .ynab.tight { background: var(--butter); color: #2E2400; }
 .ynab.over { background: var(--clay); color: #2B1405; }
 .sel { font: inherit; font-size: 15px; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); width: 100%; }
+
+/* Meal card: "Have it" ticks, remove buttons, add rows */
+.ing:has(.havebox) { grid-template-columns: 28px 1fr auto; align-items: center; }
+.havebox { width: 24px; height: 24px; border-radius: 8px; border: 2px solid var(--line); background: var(--surface); display: grid; place-items: center; padding: 0; }
+.havebox svg { width: 14px; height: 14px; opacity: 0; color: var(--accent-ink); }
+.havebox[aria-pressed="true"] { background: var(--good); border-color: var(--good); }
+.havebox[aria-pressed="true"] svg { opacity: 1; }
+.ing.have .ing-name, .ing.have b { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line); }
+.ing-right { display: flex; align-items: center; gap: 4px; }
+.x.small { width: 24px; height: 24px; }
+.x.small svg { width: 12px; height: 12px; }
+.addrow.boxed { border: 1px dashed var(--accent); border-radius: 14px; justify-content: center; background: var(--surface); }
+
+/* Toast with an Undo button */
+.toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 10px; white-space: normal; max-width: calc(100% - 32px); }
+.toast-btn { border: 0; background: var(--butter); color: #2E2400; border-radius: 999px; padding: 4px 12px; font-weight: 800; font-size: 13px; }
